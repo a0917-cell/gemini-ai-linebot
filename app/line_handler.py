@@ -90,7 +90,12 @@ async def _download_line_content(message_id: str) -> bytes:
 
 async def _save_to_gcs(data: bytes, path: str, content_type: str) -> str:
     if not GCS_BUCKET:
-        return ""
+        local_path = os.path.join("tmp_uploads", path.replace("/", os.sep))
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "wb") as f:
+            f.write(data)
+        return local_path
+
     client = gcs.Client()
     blob = client.bucket(GCS_BUCKET).blob(path)
     blob.upload_from_string(data, content_type=content_type)
@@ -98,6 +103,11 @@ async def _save_to_gcs(data: bytes, path: str, content_type: str) -> str:
 
 
 async def _load_from_gcs(path: str) -> bytes:
+    if not GCS_BUCKET:
+        local_path = os.path.join("tmp_uploads", path.replace("/", os.sep))
+        with open(local_path, "rb") as f:
+            return f.read()
+
     client = gcs.Client()
     return client.bucket(GCS_BUCKET).blob(path).download_as_bytes()
 

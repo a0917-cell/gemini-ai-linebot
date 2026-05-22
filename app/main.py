@@ -73,21 +73,42 @@ async def store_info() -> dict:
 async def webhook(request: Request, background_tasks: BackgroundTasks) -> str:
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
+    body_str = body.decode("utf-8")
+
+    print(f"[Webhook] Received request, signature={signature[:10]}...")
+    print(f"[Webhook] Body preview: {body_str[:200]}")
 
     try:
-        events = parser.parse(body.decode("utf-8"), signature)
-    except InvalidSignatureError:
+        events = parser.parse(body_str, signature)
+    except InvalidSignatureError as e:
+        print(f"[Webhook] ❌ InvalidSignatureError: {e}")
         raise HTTPException(status_code=400, detail="Invalid signature")
 
+    print(f"[Webhook] Parsed {len(events)} events")
+
     for event in events:
-        if isinstance(event, MessageEvent):
-            if isinstance(event.message, TextMessageContent):
-                await line_handler.handle_text_message(event)
-            elif isinstance(event.message, ImageMessageContent):
-                await line_handler.handle_image_message(event, background_tasks)
-            elif isinstance(event.message, FileMessageContent):
-                await line_handler.handle_file_message(event, background_tasks)
-        elif isinstance(event, PostbackEvent):
-            await line_handler.handle_postback(event, background_tasks)
+        print(f"[Webhook] Processing event type: {type(event).__name__}")
+        try:
+            if isinstance(event, MessageEvent):
+                msg_type = type(event.message).__name__
+                print(f"[Webhook] MessageEvent, message type: {msg_type}")
+                if isinstance(event.message, TextMessageContent):
+                    print(f"[Webhook] Text: {event.message.text[:80]}")
+                    await line_handler.handle_text_message(event)
+                elif isinstance(event.message, ImageMessageContent):
+                    await line_handler.handle_image_message(event, background_tasks)
+                elif isinstance(event.message, FileMessageContent):
+                    await line_handler.handle_file_message(event, background_tasks)
+                else:
+                    print(f"[Webhook] ⚠️ Unhandled message type: {msg_type}")
+            elif isinstance(event, PostbackEvent):
+                print(f"[Webhook] PostbackEvent data: {event.postback.data}")
+                await line_handler.handle_postback(event, background_tasks)
+            else:
+                print(f"[Webhook] ⚠️ Unhandled event type: {type(event).__name__}")
+        except Exception as e:
+            import traceback
+            print(f"[Webhook] ❌ Error processing event: {e}")
+            print(traceback.format_exc())
 
     return "OK"
