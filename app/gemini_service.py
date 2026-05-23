@@ -72,7 +72,7 @@ def _save_store_name_to_gcs(name: str) -> None:
 
 
 def get_or_create_store() -> str:
-    """Get existing File Search Store name or create a new one. Cached in memory."""
+    """Get existing File Search Store name or reuse/create one. Cached in memory."""
     global _store_name
     if _store_name:
         return _store_name
@@ -80,10 +80,23 @@ def get_or_create_store() -> str:
     stored = _load_store_name_from_gcs()
     if stored:
         _store_name = stored
-        print(f"[Store] Loaded existing store: {_store_name}")
+        print(f"[Store] Loaded existing store from GCS: {_store_name}")
         return _store_name
 
     client = get_client()
+    try:
+        # Check if a store with our display name already exists to reuse it
+        print("[Store] Checking if an existing file search store already exists in Gemini AI Studio...")
+        existing_stores = list(client.file_search_stores.list())
+        for store in existing_stores:
+            if store.display_name == "linebot-multimodal-rag":
+                _store_name = store.name
+                print(f"[Store] Reusing existing store found in Gemini AI Studio: {_store_name}")
+                return _store_name
+    except Exception as e:
+        print(f"[Store] Warning: Failed to list existing stores: {e}")
+
+    # Create new store if none found
     store = client.file_search_stores.create(
         config={
             "display_name": "linebot-multimodal-rag",
