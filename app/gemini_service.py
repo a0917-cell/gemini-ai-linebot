@@ -1,5 +1,6 @@
 import os
 import time
+import random
 import asyncio
 import tempfile
 import mimetypes
@@ -188,6 +189,38 @@ async def upload_and_index(
 
 # --- Query ---
 
+# Substrings that mark a transient, retryable Gemini error (overload / rate limit /
+# transient server fault). Matched case-insensitively against str(exception).
+_TRANSIENT_MARKERS = (
+    "503", "unavailable", "overloaded", "high demand",
+    "429", "resource_exhausted", "rate limit",
+    "500", "internal error", "deadline",
+)
+
+
+def _is_transient(exc: Exception) -> bool:
+    return any(m in str(exc).lower() for m in _TRANSIENT_MARKERS)
+
+
+async def _generate_with_retry(*, max_retries: int = 3, **kwargs):
+    """Call generate_content with exponential backoff on transient errors
+    (503 overload, 429 rate limit, 5xx). Non-transient errors raise immediately."""
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            return await get_client().aio.models.generate_content(**kwargs)
+        except Exception as e:
+            if not _is_transient(e):
+                raise
+            last_exc = e
+            if attempt < max_retries:
+                delay = min(2 ** attempt, 8) + random.uniform(0, 0.5)
+                print(f"[Gemini] transient error (attempt {attempt + 1}/{max_retries + 1}): "
+                      f"{str(e)[:120]}; retrying in {delay:.1f}s")
+                await asyncio.sleep(delay)
+    raise last_exc  # type: ignore[misc]
+
+
 def _user_filter(user_id: str) -> str:
     """Metadata filter expression — restricts results to documents owned by user_id."""
     # LINE user IDs are 'U' + 32 hex chars, safe in google.aip.dev/160 filter syntax
@@ -198,7 +231,7 @@ async def query_with_text(text: str, user_id: str) -> str:
     """RAG query using text input, restricted to caller's documents."""
     store_name = get_or_create_store()
 
-    response = await get_client().aio.models.generate_content(
+    response = await _generate_with_retry(
         model=GEN_MODEL,
         contents=text,
         config=types.GenerateContentConfig(
@@ -225,7 +258,7 @@ async def query_with_image(image_bytes: bytes, mime_type: str, user_id: str) -> 
     filter_expr = _user_filter(user_id)
 
     try:
-        response = await get_client().aio.models.generate_content(
+        response = await _generate_with_retry(
             model=GEN_MODEL,
             contents=types.Content(
                 parts=[
@@ -254,7 +287,7 @@ async def query_with_image(image_bytes: bytes, mime_type: str, user_id: str) -> 
         return response.text
     except Exception:
         # Fallback: describe image first, then text search
-        desc_response = await get_client().aio.models.generate_content(
+        desc_response = await _generate_with_retry(
             model=GEN_MODEL,
             contents=types.Content(
                 parts=[

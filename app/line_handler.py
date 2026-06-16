@@ -141,7 +141,10 @@ async def handle_text_message(event: MessageEvent) -> None:
     try:
         answer = await gemini.query_with_text(text, user_id)
     except Exception as e:
-        answer = f"❌ 查詢失敗：{str(e)[:120]}"
+        if gemini._is_transient(e):
+            answer = "⚠️ 系統忙線中（AI 模型流量高峰），請稍候幾秒再傳一次 🙏"
+        else:
+            answer = f"❌ 查詢失敗：{str(e)[:120]}"
 
     await _reply(event.reply_token, answer)
 
