@@ -29,7 +29,7 @@
 
 - [ ] T15（2026-09-29 新增）：查清楚 Render 上設了 `GCS_BUCKET`，卻沒有任何 GCP 憑證的環境變數。`gcs.Client()` 很可能在上傳檔案時失敗 — done when：在 Render log 確認一次上傳走的是 GCS 還是失敗；失敗的話，改成拿掉 `GCS_BUCKET`（走本機 fallback）或補上憑證 (depends: T0)
 
-- [ ] T16（2026-09-29 新增，⚠ 安全）：`GET /store/info` 不需要驗證就會列出 store 裡**所有使用者上傳的檔名**，而且出錯時把原始錯誤回給呼叫者（`main.py:69`）；`/health` 也公開了 store 名稱 — done when：沒帶密鑰呼叫 `/store/info` 回 403（或整個端點移除），`/health` 只回 `{"status": "ok"}`，都有測試 (depends: T0)。**建議排在 T3 之前做**，因為它現在就在線上。
+- [x] T16（2026-09-29 新增，⚠ 安全；同日完成：要帶 `X-Admin-Token`，沒設 `ADMIN_TOKEN` 時預設關閉、回 403，錯誤不回傳原始內容，`/health` 只回 status；27 passed，mutation 4/4 caught；**要 push 部署才會在線上生效**）：`GET /store/info` 不需要驗證就會列出 store 裡**所有使用者上傳的檔名**，而且出錯時把原始錯誤回給呼叫者（`main.py:69`）；`/health` 也公開了 store 名稱 — done when：沒帶密鑰呼叫 `/store/info` 回 403（或整個端點移除），`/health` 只回 `{"status": "ok"}`，都有測試 (depends: T0)。**建議排在 T3 之前做**，因為它現在就在線上。
 
 **可以平行做的**：T5 可以隨時先做；T0 完成後，T1/T3/T4/T9 彼此獨立。
 

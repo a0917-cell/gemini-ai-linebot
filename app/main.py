@@ -1,11 +1,12 @@
 import asyncio
+import hmac
 import os
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
+from fastapi import FastAPI, Header, HTTPException, Request, BackgroundTasks
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhooks import (
@@ -33,13 +34,24 @@ async def startup() -> None:
         print(f"[Startup] Warning: Could not initialize store: {e}")
 
 
+def _require_admin(token: str) -> None:
+    """403 unless the X-Admin-Token header matches ADMIN_TOKEN. Fails closed:
+    with ADMIN_TOKEN unset, nothing gets in (an empty header must not match)."""
+    expected = os.environ.get("ADMIN_TOKEN", "")
+    if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "store": gemini._store_name or "not initialized"}
+    # Public (keep-warm pings hit it): report liveness only, no resource names.
+    return {"status": "ok"}
 
 
 @app.get("/store/info")
-async def store_info() -> dict:
+async def store_info(x_admin_token: str = Header(default="")) -> dict:
+    """Admin-only: lists every user's documents in the shared store."""
+    _require_admin(x_admin_token)
     loop = asyncio.get_event_loop()
     try:
         store_name = await loop.run_in_executor(None, gemini.get_or_create_store)
@@ -66,7 +78,8 @@ async def store_info() -> dict:
             ],
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[store/info] Error: {e}")
+        raise HTTPException(status_code=500, detail="store info unavailable")
 
 
 @app.post("/webhook")

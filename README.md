@@ -147,8 +147,8 @@ ngrok http 8080
 # 健康檢查
 curl http://localhost:8080/health
 
-# 查看 File Search Store 狀態（已索引幾份文件）
-curl http://localhost:8080/store/info
+# 查看 File Search Store 狀態（已索引幾份文件）——要先在 .env 設 ADMIN_TOKEN，沒設時一律回 403
+curl -H "X-Admin-Token: $ADMIN_TOKEN" http://localhost:8080/store/info
 ```
 
 ---

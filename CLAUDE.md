@@ -102,7 +102,7 @@ response = await client.aio.models.generate_content(
 
 ## Things NOT yet done (potential next tasks)
 
-- `/store/info` is unauthenticated — protect for production
+- ~~`/store/info` is unauthenticated~~ — done 2026-09-29: needs `X-Admin-Token` == `ADMIN_TOKEN`, 403 when `ADMIN_TOKEN` is unset (fails closed); `/health` returns only `{"status": "ok"}`
 - Session store still in-memory (need Firestore for min-instances=0)
 - No deletion flow — users can't remove their own documents via LINE
 - No quota/rate limiting per user
