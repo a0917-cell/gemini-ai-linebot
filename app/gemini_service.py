@@ -142,6 +142,14 @@ def _upload_and_index_sync(
     """Blocking: upload file to File Search Store and poll until indexed.
     user_id is stored as custom_metadata to enable per-user filtering at query time.
     """
+    # A document tagged with the KB id is visible to every user, and a second
+    # user_id/source entry would make ownership ambiguous: personal uploads can
+    # never take either route. The KB itself is written by scripts/ingest_kb.py.
+    if not user_id or user_id == KB_USER_ID or _UNSAFE_ID.search(user_id):
+        raise ValueError(f"refusing to upload a personal file as user_id={user_id!r}")
+    if any(m.get("key") in ("user_id", "source") for m in (extra_metadata or [])):
+        raise ValueError("extra_metadata may not set user_id or source")
+
     client = get_client()
     store_name = get_or_create_store()
 

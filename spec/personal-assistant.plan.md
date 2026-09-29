@@ -24,8 +24,10 @@
 - [x] T6a（2026-09-29 插入，Stop-the-Line；同日完成：38 passed，關掉「指定優先」的 mutant 會被抓到）：免費專案裡有**兩個**同名 store（`…c1v9232tcirj`、`…4xwnfoqme9q8`），**都是 0 份文件**；bot 靠「GCS 讀名稱失敗 → 列出來挑第一個同名的」決定用哪個，結果不保證固定（Render log 目前是 `…c1v9232tcirj`）。新增 `GEMINI_STORE_NAME` 環境變數，有設就直接用 — done when：測試證明有設時不會去列出或建立 store；T13 部署時在 Render 設成 `fileSearchStores/linebotmultimodalrag-c1v9232tcirj`；T6 也上傳到同一個 store (depends: T0)。另一個空 store 刪不刪由使用者決定。
 - [x] T6：`scripts/ingest_kb.py`：把 HJPLUS `raw\` 的 `.md` 上傳，標 `user_id="__kb__"`、`source=HJPLUS`；用顯示名稱判斷避免重複上傳；預設 dry-run — done when：dry-run 列出 332 份；實跑後 store 裡的 KB 文件數 = 332 (depends: T5) ⚠ 文件寫進正式 store；rollback：依 metadata 刪掉 `__kb__` 文件
   - 2026-09-29 完成：store `…c1v9232tcirj` 裡的 KB 文件數 = **332**，全部 ACTIVE，顯示名稱不重複；status：none 296、unverified 21、verified 8、draft 4。第一次跑少了 3 份：2 份是中文檔名（SDK 把檔名放進 HTTP 標頭，必須是 ASCII），修法是改用 ASCII 名稱的暫存副本上傳，並加了測試；另外 2 份是 `Server disconnected`（其中 1 份其實伺服器端已成功），重跑時因為會跳過已上傳的檔名，只補了缺的 3 份。當時看到的「exit code 0」是管線裡 `grep` 的結束碼，不是腳本本身的；重跑時沒接管線，腳本回 0。同日依使用者同意，刪除了空的重複 store `…4xwnfoqme9q8`（刪前確認 0 份文件，用 force=False 刪除）。
-- [ ] T7：查詢 filter 改成「本人 OR KB」，prompt 要求法規答案附出處，KB 內容標示未查證的要加「待查證」 — done when：單元測試檢查 filter 字串（AC5）；手動問一題防火區劃，回答有出處 (depends: T5, T6)
-- [ ] T8：使用者隔離的回歸測試：filter 裡一定有本人的 `user_id`，而且永遠不會只剩 KB — done when：AC4 的單元測試通過 (depends: T7)
+- [x] T7：查詢 filter 改成「本人 OR KB」，prompt 要求法規答案附出處，KB 內容標示未查證的要加「待查證」 — done when：單元測試檢查 filter 字串（AC5）；手動問一題防火區劃，回答有出處 (depends: T5, T6)
+  - 2026-09-29 完成（8ca897f 已部署）：使用者在 LINE 問「樓梯最小寬度」，回答引用建築技術規則第 33 條，結尾附「📚 法規知識庫（HJPLUS，CC BY-SA 4.0）：建築設計施工編/樓梯欄杆坡道、…」。**待查證那一行不在截圖範圍內**，只有測試覆蓋，線上還沒親眼看到。
+- [x] T8：使用者隔離的回歸測試：filter 裡一定有本人的 `user_id`，而且永遠不會只剩 KB — done when：AC4 的單元測試通過 (depends: T7)
+  - 2026-09-29 完成：讀取端（文字查詢、以圖搜尋、handler 用寄件人的 LINE id）與寫入端（個人上傳不可標成 __kb__、extra_metadata 不可覆寫 user_id/source）共 7 條；寫入端兩個洞先 RED 再修。65 passed，mutation 4/4 caught。
 - [ ] T9：`app/reminders.py`：以 Sheets 為儲存（add / list_pending / list_due / mark_sent / cancel），測試用記憶體版替身 — done when：替身和介面契約測試通過；用真的 Sheet 手動寫一筆、讀一筆 (depends: T0) ⚠ Sheet 欄位格式等於資料格式，定了就不好改；rollback：換一張新 Sheet
 - [ ] T10：解析提醒時間：Gemini 結構化輸出 `{when, text}`（prompt 帶入現在的台北時間），程式再擋掉過去的時間、缺少的時間 — done when：過去、缺少時間、正常三種輸入各有單元測試（AC7） (depends: T1)
 - [ ] T11：把提醒指令接進文字處理：「…提醒我…」建立、「我的提醒」列出、quick reply 取消 — done when：單元測試走完建立 → 列出 → 取消 (depends: T4, T9, T10)
@@ -36,6 +38,8 @@
 - [ ] T15（2026-09-29 新增）：查清楚 Render 上設了 `GCS_BUCKET`，卻沒有任何 GCP 憑證的環境變數。`gcs.Client()` 很可能在上傳檔案時失敗 — done when：在 Render log 確認一次上傳走的是 GCS 還是失敗；失敗的話，改成拿掉 `GCS_BUCKET`（走本機 fallback）或補上憑證 (depends: T0)
 
 - [x] T16（2026-09-29 新增，⚠ 安全；同日完成：要帶 `X-Admin-Token`，沒設 `ADMIN_TOKEN` 時預設關閉、回 403，錯誤不回傳原始內容，`/health` 只回 status；27 passed，mutation 4/4 caught；**要 push 部署才會在線上生效**）：`GET /store/info` 不需要驗證就會列出 store 裡**所有使用者上傳的檔名**，而且出錯時把原始錯誤回給呼叫者（`main.py:69`）；`/health` 也公開了 store 名稱 — done when：沒帶密鑰呼叫 `/store/info` 回 403（或整個端點移除），`/health` 只回 `{"status": "ok"}`，都有測試 (depends: T0)。**建議排在 T3 之前做**，因為它現在就在線上。
+
+- [ ] T18（2026-09-29 新增，使用者截圖發現）：LINE 不支援 Markdown，模型回答裡的 `**粗體**`、`## 標題` 會原樣顯示 — done when：送出前把 Markdown 轉成純文字（粗體去掉 `**`、標題去掉 `#`，條列保留），有測試；prompt 也改成要求不用 Markdown (depends: T3)
 
 **可以平行做的**：T5 可以隨時先做；T0 完成後，T1/T3/T4/T9 彼此獨立。
 
