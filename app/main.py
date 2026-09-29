@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import os
 import time
+from datetime import datetime
 
 from dotenv import load_dotenv
 
@@ -19,6 +20,8 @@ from linebot.v3.webhooks import (
 )
 
 import app.gemini_service as gemini
+import app.reminder_tick as reminder_tick
+import app.reminders as reminders
 from app import line_handler
 
 app = FastAPI(title="LINE Bot Multimodal RAG")
@@ -81,6 +84,30 @@ async def store_info(x_admin_token: str = Header(default="")) -> dict:
     except Exception as e:
         print(f"[store/info] Error: {e}")
         raise HTTPException(status_code=500, detail="store info unavailable")
+
+
+@app.api_route("/cron/tick", methods=["GET", "HEAD"])
+async def cron_tick(key: str = "") -> dict:
+    """UptimeRobot hits this every 5 minutes: sends due reminders and keeps the
+    service warm. HEAD is accepted because UptimeRobot's HTTP monitor defaults
+    to it. The key travels in the query string (custom headers are a paid
+    UptimeRobot feature); it only lets a caller run a tick early, and a tick
+    sends nothing that is not already due."""
+    expected = os.environ.get("CRON_SECRET", "")
+    if not expected or not hmac.compare_digest(key.encode(), expected.encode()):
+        raise HTTPException(status_code=403, detail="forbidden")
+    try:
+        store = await asyncio.to_thread(reminders.get_store)
+    except reminders.RemindersNotConfigured:
+        return {"status": "ok", "reminders": "off"}
+    try:
+        result = await reminder_tick.run_tick(
+            datetime.now(reminders.TAIPEI), store, line_handler._push
+        )
+    except Exception as e:  # a 503 makes the monitor alert; details stay in the log
+        print(f"[cron/tick] Error: {e}")
+        raise HTTPException(status_code=503, detail="reminder store unavailable")
+    return {"status": "ok", **result}
 
 
 @app.post("/webhook")
