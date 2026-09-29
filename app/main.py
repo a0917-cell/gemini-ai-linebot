@@ -1,6 +1,7 @@
 import asyncio
 import hmac
 import os
+import time
 
 from dotenv import load_dotenv
 
@@ -107,7 +108,9 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> str:
                 print(f"[Webhook] MessageEvent, message type: {msg_type}")
                 if isinstance(event.message, TextMessageContent):
                     print(f"[Webhook] Text: {event.message.text[:80]}")
-                    await line_handler.handle_text_message(event)
+                    # Generation (retries + fallback) can outlast LINE's patience;
+                    # answer the webhook now and reply from the background.
+                    background_tasks.add_task(line_handler.handle_text_message, event, time.monotonic())
                 elif isinstance(event.message, ImageMessageContent):
                     await line_handler.handle_image_message(event, background_tasks)
                 elif isinstance(event.message, FileMessageContent):

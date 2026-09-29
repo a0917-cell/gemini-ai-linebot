@@ -14,8 +14,10 @@
   - 2026-09-29 完成：9 passed（6 條新測試）；mutation 5/5 caught（第一輪 3 個因為 CRLF 比對不到，沒有跑到，改成單行比對後重跑）。**部署注意**：`.env`（`gemini-2.5-flash`）和 Render 上的 `GEMINI_MODEL` 都會蓋掉程式預設值，T13 要把 Render 的改成 `gemini-3.8-flash`，並新增 `GEMINI_FALLBACK_MODEL`。
 - [x] T2：所有錯誤都轉成中文說明，回覆裡不會出現原始錯誤字串 — done when：模擬兩個模型都失敗，回覆裡沒有 `503`、`{'error'`（AC2） (depends: T1)
   - 2026-09-29 完成：5 個外洩點（文字查詢、圖片、檔案、背景存入 push、以圖搜尋）都改走 `_friendly_error()`，完整錯誤只寫進 log。20 passed（新增 11 條，每條路徑都測過載和一般錯誤兩種）；mutation 6/6 caught，另外用 UTF-8 重跑一個 mutant，確認失敗原因是「raw error leaked」那條斷言。
-- [ ] T3：改寫 `SYSTEM_PROMPT`：沒有相關文件時照樣直接回答，用到文件就附檔名，支援中越日翻譯 — done when：沒上傳文件的帳號問一般問題，得到直接回答（AC3，手動） (depends: T0)
-- [ ] T4：文字訊息改成先回 200、在背景產生回覆，用 reply token 回；超過 50 秒才改用 push — done when：模擬模型很慢時，webhook 仍在 1 秒內回 200 (depends: T0)
+- [x] T3：改寫 `SYSTEM_PROMPT`：沒有相關文件時照樣直接回答，用到文件就附檔名，支援中越日翻譯 — done when：沒上傳文件的帳號問一般問題，得到直接回答（AC3，手動） (depends: T0)
+  - 2026-09-29 完成（2b10f1b 已部署）：使用者在 LINE 實測「改寫句子」直接得到兩種改寫版本，傳圖時出現 🔒 保密提醒（依決定 (a)）。
+- [x] T4：文字訊息改成先回 200、在背景產生回覆，用 reply token 回；超過 50 秒才改用 push — done when：模擬模型很慢時，webhook 仍在 1 秒內回 200 (depends: T0)
+  - 2026-09-29 完成：webhook 改成 `background_tasks.add_task`，測試直接呼叫 webhook，斷言文字處理被排進背景、沒有當場執行（驗證的是這個結構，沒有量實際的毫秒數）。背景任務會先顯示 LINE 的「輸入中」動畫（失敗不會影響回答），50 秒內用 reply token 回（依據 LINE 文件「reply token 必須在收到 webhook 後 1 分鐘內使用」），超過 50 秒或 reply 被拒才改用 push。36 passed，mutation 5/5 caught。風險 #2（push 有免費則數上限）仍然存在：只有慢回覆時才會用到 push。
 - [ ] T5：**驗證** File Search 的 `metadata_filter` 支不支援 `user_id="U…" OR user_id="__kb__"`：建一個測試用 store、放兩份文件、各查一次，驗完刪掉 — done when：腳本輸出證明兩份都查得到、第三份（別的 user_id）查不到 (depends: —) ⚠ 用真的 API，但免費；不支援的話退回「兩個 store 分開查」，T7 跟著改
 - [ ] T6：`scripts/ingest_kb.py`：把 HJPLUS `raw\` 的 `.md` 上傳，標 `user_id="__kb__"`、`source=HJPLUS`；用顯示名稱判斷避免重複上傳；預設 dry-run — done when：dry-run 列出 332 份；實跑後 store 裡的 KB 文件數 = 332 (depends: T5) ⚠ 文件寫進正式 store；rollback：依 metadata 刪掉 `__kb__` 文件
 - [ ] T7：查詢 filter 改成「本人 OR KB」，prompt 要求法規答案附出處，KB 內容標示未查證的要加「待查證」 — done when：單元測試檢查 filter 字串（AC5）；手動問一題防火區劃，回答有出處 (depends: T5, T6)

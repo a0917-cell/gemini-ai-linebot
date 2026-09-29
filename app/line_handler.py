@@ -1,5 +1,6 @@
 import os
 import mimetypes
+import time
 import traceback
 from typing import Optional
 
@@ -11,6 +12,7 @@ from linebot.v3.messaging import (
     Configuration,
     ReplyMessageRequest,
     PushMessageRequest,
+    ShowLoadingAnimationRequest,
     TextMessage,
     QuickReply,
     QuickReplyItem,
@@ -40,6 +42,10 @@ MAX_STORE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB (Gemini limit)
 # Google's products (ai.google.dev pricing, 2026-09-29). Shown whenever a file
 # arrives, before the user chooses to store it.
 PRIVACY_NOTE = "🔒 提醒：這個助手用的是免費版 AI，內容可能被 Google 用來改進產品，請不要上傳公司機密或客戶資料。"
+
+# LINE: "Reply tokens must be used within one minute after receiving the webhook."
+# Keep a margin; past this, answers go out by push instead.
+REPLY_TOKEN_BUDGET_S = 50
 
 
 # --- Helpers ---
@@ -84,6 +90,26 @@ async def _push(user_id: str, text: str) -> None:
         await api.push_message(
             PushMessageRequest(to=user_id, messages=[TextMessage(text=text)])
         )
+
+
+async def _show_loading(user_id: str, seconds: int = 60) -> None:
+    """LINE's typing indicator while the answer is being generated (1:1 chats)."""
+    async with AsyncApiClient(configuration) as api_client:
+        await AsyncMessagingApi(api_client).show_loading_animation(
+            ShowLoadingAnimationRequest(chat_id=user_id, loading_seconds=seconds)
+        )
+
+
+async def _deliver(reply_token: str, user_id: str, text: str, received_at: float) -> None:
+    """Reply while the token is still fresh (replies are free); otherwise, or if
+    LINE rejects the token, push (counts against the monthly message quota)."""
+    if time.monotonic() - received_at < REPLY_TOKEN_BUDGET_S:
+        try:
+            await _reply(reply_token, text)
+            return
+        except Exception as e:
+            print(f"[Reply] rejected, falling back to push: {e}")
+    await _push(user_id, text)
 
 
 def _friendly_error(action: str, exc: Exception) -> str:
@@ -145,7 +171,11 @@ async def _bg_store_and_notify(
 
 # --- Event Handlers ---
 
-async def handle_text_message(event: MessageEvent) -> None:
+async def handle_text_message(event: MessageEvent, received_at: Optional[float] = None) -> None:
+    """Runs as a background task: the webhook has already answered LINE.
+    received_at is time.monotonic() when the webhook arrived (reply-token clock)."""
+    if received_at is None:
+        received_at = time.monotonic()
     text = event.message.text.strip()
     if not text:
         return
@@ -153,11 +183,16 @@ async def handle_text_message(event: MessageEvent) -> None:
     user_id = event.source.user_id
 
     try:
+        await _show_loading(user_id)
+    except Exception as e:  # cosmetic only; never block the answer
+        print(f"[Loading] could not show animation: {e}")
+
+    try:
         answer = await gemini.query_with_text(text, user_id)
     except Exception as e:
         answer = _friendly_error("查詢", e)
 
-    await _reply(event.reply_token, answer)
+    await _deliver(event.reply_token, user_id, answer, received_at)
 
 
 async def handle_image_message(
