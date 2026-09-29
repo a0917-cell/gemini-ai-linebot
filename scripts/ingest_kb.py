@@ -18,7 +18,9 @@ Usage:
 import argparse
 import os
 import re
+import shutil
 import sys
+import tempfile
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -79,6 +81,16 @@ def _existing_kb_names(client, store: str) -> set:
 
 def _upload_one(client, store: str, path: Path, name: str) -> str:
     status = parse_status(path.read_text(encoding="utf-8", errors="ignore"))
+    # The SDK sends the file's basename in an HTTP header, which must be ASCII:
+    # "安裝與分享說明.md" failed with "'ascii' codec can't encode". Upload an
+    # ASCII-named copy; the Chinese path survives as display_name.
+    with tempfile.TemporaryDirectory() as tmp:
+        ascii_copy = Path(tmp) / "kb-document.md"
+        shutil.copyfile(path, ascii_copy)
+        return _upload_with_retry(client, store, ascii_copy, name, status)
+
+
+def _upload_with_retry(client, store: str, path: Path, name: str, status: str) -> str:
     for attempt in range(5):
         try:
             op = client.file_search_stores.upload_to_file_search_store(

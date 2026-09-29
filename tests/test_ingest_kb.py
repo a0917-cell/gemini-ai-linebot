@@ -54,5 +54,29 @@ def test_metadata_marks_kb_source_and_status():
     assert {"key": "status", "string_value": "unverified"} in md
 
 
+def test_non_ascii_file_names_are_uploaded_under_an_ascii_name(tmp_path):
+    # The SDK puts the file's basename in an HTTP header; "安裝與分享說明.md"
+    # failed with "'ascii' codec can't encode" on the 2026-09-29 run.
+    src = tmp_path / "安裝與分享說明.md"
+    src.write_text("---\nstatus: draft\n---\n# x\n", encoding="utf-8")
+    seen = {}
+
+    def upload(file_search_store_name, file, config):
+        seen["basename"] = file.replace("\\", "/").rsplit("/", 1)[-1]
+        seen["content"] = open(file, encoding="utf-8").read()
+        seen["display_name"] = config["display_name"]
+        from types import SimpleNamespace
+        return SimpleNamespace(done=True, error=None)
+
+    from types import SimpleNamespace
+    client = SimpleNamespace(file_search_stores=SimpleNamespace(upload_to_file_search_store=upload))
+
+    kb._upload_one(client, "fileSearchStores/s", src, "HJPLUS/安裝與分享說明.md")
+
+    assert seen["basename"].isascii()
+    assert seen["content"].startswith("---\nstatus: draft")
+    assert seen["display_name"] == "HJPLUS/安裝與分享說明.md"
+
+
 def test_metadata_omits_status_when_file_has_none():
     assert all(m["key"] != "status" for m in kb.metadata_for(""))
