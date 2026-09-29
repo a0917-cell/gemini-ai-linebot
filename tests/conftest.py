@@ -32,3 +32,4 @@ def _no_real_clients(monkeypatch):
     # Module-level caches would otherwise carry a client or store name across tests.
     monkeypatch.setattr(gemini, "_client", None)
     monkeypatch.setattr(gemini, "_store_name", "")
+    monkeypatch.setattr(gemini, "_kb_status_cache", None)

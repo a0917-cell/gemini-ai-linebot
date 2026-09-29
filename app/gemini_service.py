@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import random
 import asyncio
@@ -252,10 +253,79 @@ async def _retry_loop(max_retries: int, **kwargs):
     raise last_exc  # type: ignore[misc]
 
 
+# Shared regulation KB (scripts/ingest_kb.py): documents tagged user_id="__kb__".
+# OR in metadata_filter was proved against the real API (scripts/spike_or_filter.py).
+KB_USER_ID = "__kb__"
+KB_SOURCE = "HJPLUS"
+_UNSAFE_ID = re.compile(r'["\\\s]')
+_kb_status_cache: Optional[dict] = None
+
+
 def _user_filter(user_id: str) -> str:
-    """Metadata filter expression — restricts results to documents owned by user_id."""
-    # LINE user IDs are 'U' + 32 hex chars, safe in google.aip.dev/160 filter syntax
-    return f'user_id="{user_id}"'
+    """The caller's own documents plus the shared KB, never anyone else's.
+    LINE user IDs are 'U' + 32 hex chars; anything that could close the quoted
+    string and add a clause (quote, backslash, whitespace) is rejected."""
+    if not user_id or _UNSAFE_ID.search(user_id):
+        raise ValueError(f"unsafe user id for metadata filter: {user_id!r}")
+    return f'user_id="{user_id}" OR user_id="{KB_USER_ID}"'
+
+
+def _kb_status_map() -> dict:
+    """display_name -> status for KB documents, fetched once per process."""
+    global _kb_status_cache
+    if _kb_status_cache is None:
+        store = get_or_create_store()
+        statuses = {}
+        for d in get_client().file_search_stores.documents.list(parent=store):
+            meta = {m.key: m.string_value for m in (d.custom_metadata or [])}
+            if meta.get("source") == KB_SOURCE:
+                statuses[d.display_name] = meta.get("status", "")
+        _kb_status_cache = statuses
+    return _kb_status_cache
+
+
+def _retrieved_titles(response) -> list:
+    """Titles of documents actually retrieved (grounding metadata), in order, unique."""
+    seen = []
+    for cand in getattr(response, "candidates", None) or []:
+        gm = getattr(cand, "grounding_metadata", None)
+        for chunk in (getattr(gm, "grounding_chunks", None) or []):
+            ctx = getattr(chunk, "retrieved_context", None)
+            title = getattr(ctx, "title", None) if ctx is not None else None
+            if title and title not in seen:
+                seen.append(title)
+    return seen
+
+
+def _short_kb_title(title: str) -> str:
+    """HJPLUS/建築法規/防火區劃/fire-compartment/SKILL.md -> 防火區劃/fire-compartment"""
+    parts = title.split("/")[1:-1]
+    return "/".join(parts[-2:]) if parts else title.split("/")[-1]
+
+
+def _with_sources(response) -> str:
+    """Append sources computed from what was actually retrieved, plus a warning
+    when a KB source is marked unverified/draft. Deterministic, unlike asking
+    the model to cite, and the status lives in metadata the model rarely sees."""
+    text = response.text or ""
+    titles = _retrieved_titles(response)
+    if not titles:
+        return text
+    kb = [t for t in titles if t.startswith(f"{KB_SOURCE}/")]
+    own = [t for t in titles if t not in kb]
+    lines = []
+    if own:
+        lines.append("📎 來源：" + "、".join(own[:5]))
+    if kb:
+        lines.append(f"📚 法規知識庫（{KB_SOURCE}，CC BY-SA 4.0）：" + "、".join(_short_kb_title(t) for t in kb[:3]))
+        try:
+            statuses = _kb_status_map()
+        except Exception as e:  # a missing warning must not cost the answer
+            print(f"[KB] status lookup failed: {e}")
+            statuses = {}
+        if any(statuses.get(t) in ("unverified", "draft") for t in kb):
+            lines.append("⚠️ 部分法規內容在知識庫標示為待查證，請以法規原文或主管機關公告為準。")
+    return f"{text}\n\n" + "\n".join(lines)
 
 
 async def query_with_text(text: str, user_id: str) -> str:
@@ -277,7 +347,7 @@ async def query_with_text(text: str, user_id: str) -> str:
             ],
         ),
     )
-    return response.text
+    return _with_sources(response)
 
 
 async def query_with_image(image_bytes: bytes, mime_type: str, user_id: str) -> str:
@@ -315,7 +385,7 @@ async def query_with_image(image_bytes: bytes, mime_type: str, user_id: str) -> 
                 ],
             ),
         )
-        return response.text
+        return _with_sources(response)
     except Exception:
         # Fallback: describe image first, then text search
         desc_response = await _generate_with_retry(
