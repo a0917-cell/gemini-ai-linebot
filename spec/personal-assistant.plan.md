@@ -18,7 +18,9 @@
   - 2026-09-29 完成（2b10f1b 已部署）：使用者在 LINE 實測「改寫句子」直接得到兩種改寫版本，傳圖時出現 🔒 保密提醒（依決定 (a)）。
 - [x] T4：文字訊息改成先回 200、在背景產生回覆，用 reply token 回；超過 50 秒才改用 push — done when：模擬模型很慢時，webhook 仍在 1 秒內回 200 (depends: T0)
   - 2026-09-29 完成：webhook 改成 `background_tasks.add_task`，測試直接呼叫 webhook，斷言文字處理被排進背景、沒有當場執行（驗證的是這個結構，沒有量實際的毫秒數）。背景任務會先顯示 LINE 的「輸入中」動畫（失敗不會影響回答），50 秒內用 reply token 回（依據 LINE 文件「reply token 必須在收到 webhook 後 1 分鐘內使用」），超過 50 秒或 reply 被拒才改用 push。36 passed，mutation 5/5 caught。風險 #2（push 有免費則數上限）仍然存在：只有慢回覆時才會用到 push。
-- [ ] T5：**驗證** File Search 的 `metadata_filter` 支不支援 `user_id="U…" OR user_id="__kb__"`：建一個測試用 store、放兩份文件、各查一次，驗完刪掉 — done when：腳本輸出證明兩份都查得到、第三份（別的 user_id）查不到 (depends: —) ⚠ 用真的 API，但免費；不支援的話退回「兩個 store 分開查」，T7 跟著改
+- [x] T5：**驗證** File Search 的 `metadata_filter` 支不支援 `user_id="U…" OR user_id="__kb__"`：建一個測試用 store、放兩份文件、各查一次，驗完刪掉 — done when：腳本輸出證明兩份都查得到、第三份（別的 user_id）查不到 (depends: —) ⚠ 用真的 API，但免費；不支援的話退回「兩個 store 分開查」，T7 跟著改
+  - 2026-09-29 完成：`scripts/spike_or_filter.py` 輸出 `VERDICT: OR filter WORKS`。依 grounding metadata，OR 篩選取回 {A, KB}、沒取回 C；對照組只篩 C 時只取回 {C}；測試 store 已刪。使用者同意這次用付費金鑰跑（費用不到 NT$1，有 NT$10 支出上限）。T7 維持單一 store 加 OR filter 的設計。
+  - ⚠ **T6 的前置條件**：正式的 store（`linebot-multimodal-rag`）在**免費專案** `gen-lang-client-0356711356`，只有免費金鑰（`…WlPM`）存取得到。本機 `.env` 是付費專案的金鑰，看不到那個 store。T6 上傳 KB 一定要用免費金鑰。
 - [ ] T6：`scripts/ingest_kb.py`：把 HJPLUS `raw\` 的 `.md` 上傳，標 `user_id="__kb__"`、`source=HJPLUS`；用顯示名稱判斷避免重複上傳；預設 dry-run — done when：dry-run 列出 332 份；實跑後 store 裡的 KB 文件數 = 332 (depends: T5) ⚠ 文件寫進正式 store；rollback：依 metadata 刪掉 `__kb__` 文件
 - [ ] T7：查詢 filter 改成「本人 OR KB」，prompt 要求法規答案附出處，KB 內容標示未查證的要加「待查證」 — done when：單元測試檢查 filter 字串（AC5）；手動問一題防火區劃，回答有出處 (depends: T5, T6)
 - [ ] T8：使用者隔離的回歸測試：filter 裡一定有本人的 `user_id`，而且永遠不會只剩 KB — done when：AC4 的單元測試通過 (depends: T7)
