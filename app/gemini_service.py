@@ -13,7 +13,12 @@ from google.cloud import storage as gcs
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
-GEN_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
+# Stable (non-preview) ids; both support File Search and the free tier (checked
+# against ai.google.dev 2026-09-29). The preview model 503'd under load.
+DEFAULT_MODEL = "gemini-3.8-flash"
+DEFAULT_FALLBACK_MODEL = "gemini-3.5-flash-lite"
+GEN_MODEL = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
+FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", DEFAULT_FALLBACK_MODEL)
 
 STORE_NAME_BLOB = "config/file_search_store_name.txt"
 SYSTEM_PROMPT = (
@@ -203,8 +208,20 @@ def _is_transient(exc: Exception) -> bool:
 
 
 async def _generate_with_retry(*, max_retries: int = 3, **kwargs):
-    """Call generate_content with exponential backoff on transient errors
-    (503 overload, 429 rate limit, 5xx). Non-transient errors raise immediately."""
+    """Call generate_content with backoff; if the model stays overloaded, try
+    FALLBACK_MODEL (one retry) before giving up. Non-transient errors raise
+    immediately and never trigger the fallback."""
+    try:
+        return await _retry_loop(max_retries, **kwargs)
+    except Exception as e:
+        if not _is_transient(e) or not FALLBACK_MODEL or kwargs.get("model") == FALLBACK_MODEL:
+            raise
+        print(f"[Gemini] {kwargs.get('model')} still overloaded; falling back to {FALLBACK_MODEL}")
+        return await _retry_loop(1, **{**kwargs, "model": FALLBACK_MODEL})
+
+
+async def _retry_loop(max_retries: int, **kwargs):
+    """Exponential backoff on transient errors (503 overload, 429 rate limit, 5xx)."""
     last_exc: Optional[Exception] = None
     for attempt in range(max_retries + 1):
         try:

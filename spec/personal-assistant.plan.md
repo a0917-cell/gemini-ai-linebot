@@ -10,7 +10,8 @@
 
 - [x] T0：建測試骨架 `tests/` + `conftest.py`，**在測試裡擋掉真的 genai、LINE、Sheets client** — done when：`pytest -q` 能跑，而且拿掉 conftest 防護時，「建出真 client 就失敗」那條測試會轉紅 (depends: —)
   - 2026-09-29 完成：3 passed；拿掉防護時 3 條都轉紅；mutation 3/3 caught。Sheets 的防護留到 T9 再加。conftest 裡重設 `_client`、`_store_name` 快取的那兩行，目前沒有測試會因為拿掉它們而轉紅，屬於預防性的寫法，不算進覆蓋率。
-- [ ] T1：主模型改成 `gemini-3.8-flash`，新增 `GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite`；主模型重試用完後改用備援 — done when：模擬主模型連續回 503，確認最後改呼叫備援模型（AC1） (depends: T0)
+- [x] T1：主模型改成 `gemini-3.8-flash`，新增 `GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite`；主模型重試用完後改用備援 — done when：模擬主模型連續回 503，確認最後改呼叫備援模型（AC1） (depends: T0)
+  - 2026-09-29 完成：9 passed（6 條新測試）；mutation 5/5 caught（第一輪 3 個因為 CRLF 比對不到，沒有跑到，改成單行比對後重跑）。**部署注意**：`.env`（`gemini-2.5-flash`）和 Render 上的 `GEMINI_MODEL` 都會蓋掉程式預設值，T13 要把 Render 的改成 `gemini-3.8-flash`，並新增 `GEMINI_FALLBACK_MODEL`。
 - [ ] T2：所有錯誤都轉成中文說明，回覆裡不會出現原始錯誤字串 — done when：模擬兩個模型都失敗，回覆裡沒有 `503`、`{'error'`（AC2） (depends: T1)
 - [ ] T3：改寫 `SYSTEM_PROMPT`：沒有相關文件時照樣直接回答，用到文件就附檔名，支援中越日翻譯 — done when：沒上傳文件的帳號問一般問題，得到直接回答（AC3，手動） (depends: T0)
 - [ ] T4：文字訊息改成先回 200、在背景產生回覆，用 reply token 回；超過 50 秒才改用 push — done when：模擬模型很慢時，webhook 仍在 1 秒內回 200 (depends: T0)
