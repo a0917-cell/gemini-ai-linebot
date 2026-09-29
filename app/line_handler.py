@@ -36,6 +36,11 @@ configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
 # Max file size LINE Bot supports: ~10MB for images, ~50MB for files
 MAX_STORE_SIZE_BYTES = 100 * 1024 * 1024  # 100MB (Gemini limit)
 
+# The bot runs on Gemini's free tier, whose content may be used to improve
+# Google's products (ai.google.dev pricing, 2026-09-29). Shown whenever a file
+# arrives, before the user chooses to store it.
+PRIVACY_NOTE = "🔒 提醒：這個助手用的是免費版 AI，內容可能被 Google 用來改進產品，請不要上傳公司機密或客戶資料。"
+
 
 # --- Helpers ---
 
@@ -173,7 +178,7 @@ async def handle_image_message(
 
         await _reply(
             event.reply_token,
-            "🖼️ 收到圖片！請問要：",
+            f"🖼️ 收到圖片！請問要：\n\n{PRIVACY_NOTE}",
             _choice_quick_reply(),
         )
     except Exception as e:
@@ -213,7 +218,7 @@ async def handle_file_message(
 
         await _reply(
             event.reply_token,
-            f"📄 收到檔案：{filename}\n請問要：",
+            f"📄 收到檔案：{filename}\n請問要：\n\n{PRIVACY_NOTE}",
             _choice_quick_reply(),
         )
     except Exception as e:
