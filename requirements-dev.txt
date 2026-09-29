@@ -1,2 +1,3 @@
 -r requirements.txt
 pytest>=8.0
+google-auth-oauthlib>=1.2.0  # scripts/setup_reminder_sheet.py only

@@ -28,6 +28,17 @@ def test_line_api_client_is_never_built_for_real():
         asyncio.run(line._reply("reply-token", "hi"))
 
 
+def test_sheets_client_is_never_built_for_real(monkeypatch):
+    import app.reminders as rem
+    monkeypatch.setenv("REMINDER_SHEET_ID", "sheet-id")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "id")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "secret")
+    monkeypatch.setenv("GOOGLE_REFRESH_TOKEN", "token")
+
+    with pytest.raises(Exception, match=BLOCKED):
+        rem.get_store()
+
+
 def test_gcs_client_is_never_built_for_real(monkeypatch):
     monkeypatch.setattr(line, "GCS_BUCKET", "some-bucket")
 

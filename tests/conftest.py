@@ -4,13 +4,13 @@
 (gemini.get_client, AsyncApiClient(...), gcs.Client()), so any test that walks a
 real code path would call the production APIs. Every constructor is replaced
 with one that raises; tests that need a client inject a fake instead
-(e.g. ``gemini._client = FakeClient()``). A Sheets client joins this list when
-the reminder store lands (plan T9).
+(e.g. ``gemini._client = FakeClient()``, ``SheetsReminderStore(FakeSheets(), ...)``).
 """
 import pytest
 
 import app.gemini_service as gemini
 import app.line_handler as line
+import app.reminders as reminders
 
 BLOCKED = "real client blocked in tests"
 
@@ -29,6 +29,8 @@ def _no_real_clients(monkeypatch):
     monkeypatch.setattr(gemini.genai, "Client", _blocked("genai.Client"))
     monkeypatch.setattr(line.gcs, "Client", _blocked("storage.Client"))
     monkeypatch.setattr(line, "AsyncApiClient", _blocked("AsyncApiClient"))
+    monkeypatch.setattr(reminders, "build", _blocked("sheets build"))
+    monkeypatch.setattr(reminders, "_store", None)
     # Module-level caches would otherwise carry a client or store name across tests.
     monkeypatch.setattr(gemini, "_client", None)
     monkeypatch.setattr(gemini, "_store_name", "")
