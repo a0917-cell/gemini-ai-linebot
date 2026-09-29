@@ -76,7 +76,7 @@ def io(monkeypatch):
             raise calls.reply_error
         calls.reply.append(text)
 
-    async def fake_push(user_id, text):
+    async def fake_push(user_id, text, quick_reply=None):
         calls.push.append(text)
 
     async def fake_loading(user_id, seconds=60):

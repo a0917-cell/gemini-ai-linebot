@@ -25,7 +25,7 @@ def sent(monkeypatch):
     async def fake_reply(token, text, quick_reply=None):
         out.append(text)
 
-    async def fake_push(user_id, text):
+    async def fake_push(user_id, text, quick_reply=None):
         out.append(text)
 
     monkeypatch.setattr(line, "_reply", fake_reply)
