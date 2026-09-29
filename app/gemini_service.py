@@ -12,6 +12,8 @@ from google import genai
 from google.genai import types
 from google.cloud import storage as gcs
 
+from app.formatting import to_plain_text
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "")
 # Stable (non-preview) ids; both support File Search and the free tier (checked
@@ -30,7 +32,8 @@ SYSTEM_PROMPT = (
     "2. 使用者問到自己上傳的文件時：根據檔案搜尋結果回答，並在句尾標出來源檔名，例如「（來源：送審單.pdf）」。\n"
     "3. 資料庫查不到相關內容時：不要只回「查無資料」，改用你的一般知識回答，並說明這不是出自使用者的文件。\n"
     "4. 法規條文、數值、日期這類事實不確定時要直接說不確定，不要編造。\n"
-    "5. 使用者在手機上閱讀：回答簡潔，有步驟時用編號清單。"
+    "5. 使用者在手機上閱讀：回答簡潔，有步驟時用編號清單。\n"
+    "6. LINE 不支援 Markdown：不要用粗體符號、# 標題、表格或程式碼區塊，只用純文字、數字編號和「・」條列。"
 )
 
 _client: Optional[genai.Client] = None
@@ -317,7 +320,7 @@ def _with_sources(response) -> str:
     unless every KB source is marked verified: most KB docs carry no status,
     and unmarked is not checked. Deterministic, unlike asking the model to
     cite, and the status lives in metadata the model rarely sees."""
-    text = response.text or ""
+    text = to_plain_text(response.text or "")
     titles = _retrieved_titles(response)
     if not titles:
         return text

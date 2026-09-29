@@ -39,7 +39,8 @@
 
 - [x] T16（2026-09-29 新增，⚠ 安全；同日完成：要帶 `X-Admin-Token`，沒設 `ADMIN_TOKEN` 時預設關閉、回 403，錯誤不回傳原始內容，`/health` 只回 status；27 passed，mutation 4/4 caught；**要 push 部署才會在線上生效**）：`GET /store/info` 不需要驗證就會列出 store 裡**所有使用者上傳的檔名**，而且出錯時把原始錯誤回給呼叫者（`main.py:69`）；`/health` 也公開了 store 名稱 — done when：沒帶密鑰呼叫 `/store/info` 回 403（或整個端點移除），`/health` 只回 `{"status": "ok"}`，都有測試 (depends: T0)。**建議排在 T3 之前做**，因為它現在就在線上。
 
-- [ ] T18（2026-09-29 新增，使用者截圖發現）：LINE 不支援 Markdown，模型回答裡的 `**粗體**`、`## 標題` 會原樣顯示 — done when：送出前把 Markdown 轉成純文字（粗體去掉 `**`、標題去掉 `#`，條列保留），有測試；prompt 也改成要求不用 Markdown (depends: T3)
+- [x] T18（2026-09-29 新增，使用者截圖發現）：LINE 不支援 Markdown，模型回答裡的 `**粗體**`、`## 標題` 會原樣顯示 — done when：送出前把 Markdown 轉成純文字（粗體去掉 `**`、標題去掉 `#`，條列保留），有測試；prompt 也改成要求不用 Markdown (depends: T3)
+  - 2026-09-29 完成（未部署）：新增 `app/formatting.py` 的 `to_plain_text`，在 `_with_sources` 裡套用，文字、圖片主路徑、圖片 fallback 三條回答路徑都會經過；來源 footer 不經過轉換，檔名裡的 `_` 不會被吃掉。粗體、斜體、標題、行內程式碼、程式碼區塊、連結、引用、分隔線都轉成純文字；`*`/`-`/`+` 條列改成「・」並保留縮排，編號清單不動，表格改成用「｜」分隔的行。SYSTEM_PROMPT 加第 6 條要求不用 Markdown。圖片主路徑沒有帶 SYSTEM_PROMPT，這部分靠轉換處理。94 passed，mutation 13/13 抓到。
 
 **可以平行做的**：T5 可以隨時先做；T0 完成後，T1/T3/T4/T9 彼此獨立。
 
