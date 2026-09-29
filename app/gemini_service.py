@@ -88,6 +88,15 @@ def get_or_create_store() -> str:
     if _store_name:
         return _store_name
 
+    # An explicit pin wins: the project holds two stores with the same display
+    # name, so "first one listed" is not a stable choice, and the KB ingest
+    # script must write to the exact store the bot reads.
+    pinned = os.environ.get("GEMINI_STORE_NAME", "").strip()
+    if pinned:
+        _store_name = pinned
+        print(f"[Store] Using pinned store from GEMINI_STORE_NAME: {_store_name}")
+        return _store_name
+
     stored = _load_store_name_from_gcs()
     if stored:
         _store_name = stored
