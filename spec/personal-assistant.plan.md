@@ -30,7 +30,8 @@
   - 2026-09-29 完成：讀取端（文字查詢、以圖搜尋、handler 用寄件人的 LINE id）與寫入端（個人上傳不可標成 __kb__、extra_metadata 不可覆寫 user_id/source）共 7 條；寫入端兩個洞先 RED 再修。65 passed，mutation 4/4 caught。
 - [x] T9：`app/reminders.py`：以 Sheets 為儲存（add / list_pending / list_due / mark_sent / cancel），測試用記憶體版替身 — done when：替身和介面契約測試通過；用真的 Sheet 手動寫一筆、讀一筆 (depends: T0) ⚠ Sheet 欄位格式等於資料格式，定了就不好改；rollback：換一張新 Sheet
   - 2026-09-29 完成（59f245b，未部署）：`app/reminders.py` 的契約測試同時跑記憶體版和 Sheets 版（用假的 Sheets service），125 passed，mutation 16/16。使用者決定：新 refresh token 只給 drive.file、新建專用試算表「LINE 助手提醒」（分頁 `reminders`）、時間存 ISO +08:00。`scripts/setup_reminder_sheet.py` 建表並把 4 個值寫進 .env（不顯示）；使用者自己在 PowerShell 跑的那次沒寫進任何值，原因沒查到（錯誤只在他的視窗裡），改由我在背景啟動、使用者登入後成功。`--smoke` 對真表寫入 → 讀回 → 取消都成功，另外直接讀表確認有 1 列 `cancelled` 的資料。T13 要在 Render 設 GOOGLE_CLIENT_ID／GOOGLE_CLIENT_SECRET／GOOGLE_REFRESH_TOKEN／REMINDER_SHEET_ID（使用者貼上）。
-- [ ] T10：解析提醒時間：Gemini 結構化輸出 `{when, text}`（prompt 帶入現在的台北時間），程式再擋掉過去的時間、缺少的時間 — done when：過去、缺少時間、正常三種輸入各有單元測試（AC7） (depends: T1)
+- [x] T10：解析提醒時間：Gemini 結構化輸出 `{when, text}`（prompt 帶入現在的台北時間），程式再擋掉過去的時間、缺少的時間 — done when：過去、缺少時間、正常三種輸入各有單元測試（AC7） (depends: T1)
+  - 2026-09-29 完成（未部署）：`app/reminder_parse.py`。Gemini 只負責拆欄位（date／hour／minute／period_given／text，結構化輸出），時間規則都在 `resolve()`。使用者決定：只說「9 點」取最近的未來時間（09:00 或 21:00）；只給日期沒給時間就預設 09:00。156 passed，mutation 17/17；第一輪「刪掉轉台北時間」那個 mutant 沒被抓到，補了台北凌晨時 UTC 還是前一天的測試才抓到。pydantic schema 已離線用 SDK（genai 2.25.0）轉換確認 nullable 正確。**沒打真的 Gemini**：本機金鑰是付費的，改在 T13 部署後用免費金鑰實測。
 - [ ] T11：把提醒指令接進文字處理：「…提醒我…」建立、「我的提醒」列出、quick reply 取消 — done when：單元測試走完建立 → 列出 → 取消 (depends: T4, T9, T10)
 - [ ] T12：`GET /cron/tick?key=…`：驗證密鑰，把到期的提醒 push 出去並標記已送出 — done when：密鑰錯誤回 403；替身 store 裡的到期提醒被送出，而且只送一次 (depends: T9)
 - [ ] T13：部署：Render 環境變數（新模型 id、`CRON_SECRET`、Sheets 憑證、`REMINDER_SHEET_ID`，**金鑰由使用者貼上**）；UptimeRobot 每 5 分鐘呼叫 `/cron/tick`（使用者登入） — done when：AC6（10 分鐘後的提醒準時到）、AC8（閒置 1 小時後 30 秒內回覆），手動各測一次 (depends: T1–T12)
