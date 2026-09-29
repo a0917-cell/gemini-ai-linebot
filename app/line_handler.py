@@ -81,6 +81,16 @@ async def _push(user_id: str, text: str) -> None:
         )
 
 
+def _friendly_error(action: str, exc: Exception) -> str:
+    """Log the real error and return only a Chinese explanation for the user.
+    Raw exception text (status codes, JSON bodies) must never reach LINE.
+    Call from inside the except block so the traceback is available."""
+    print(f"[{action}] Error: {exc}\n{traceback.format_exc()}")
+    if gemini._is_transient(exc):
+        return "⚠️ AI 忙線中，請 1 分鐘後再傳一次 🙏"
+    return f"❌ {action}失敗，請稍後再試一次。"
+
+
 async def _download_line_content(message_id: str) -> bytes:
     async with AsyncApiClient(configuration) as api_client:
         blob_api = AsyncMessagingApiBlob(api_client)
@@ -125,8 +135,7 @@ async def _bg_store_and_notify(
         await gemini.upload_and_index(file_bytes, mime_type, display_name, user_id)
         await _push(user_id, f"✅ 已成功存入您的資料庫！\n📄 {display_name}")
     except Exception as e:
-        print(f"[BG Store] Error: {e}\n{traceback.format_exc()}")
-        await _push(user_id, f"❌ 存入失敗：{str(e)[:120]}")
+        await _push(user_id, _friendly_error("存入", e))
 
 
 # --- Event Handlers ---
@@ -141,10 +150,7 @@ async def handle_text_message(event: MessageEvent) -> None:
     try:
         answer = await gemini.query_with_text(text, user_id)
     except Exception as e:
-        if gemini._is_transient(e):
-            answer = "⚠️ 系統忙線中（AI 模型流量高峰），請稍候幾秒再傳一次 🙏"
-        else:
-            answer = f"❌ 查詢失敗：{str(e)[:120]}"
+        answer = _friendly_error("查詢", e)
 
     await _reply(event.reply_token, answer)
 
@@ -171,7 +177,7 @@ async def handle_image_message(
             _choice_quick_reply(),
         )
     except Exception as e:
-        await _reply(event.reply_token, f"❌ 圖片處理失敗：{str(e)[:120]}")
+        await _reply(event.reply_token, _friendly_error("圖片處理", e))
 
 
 async def handle_file_message(
@@ -211,7 +217,7 @@ async def handle_file_message(
             _choice_quick_reply(),
         )
     except Exception as e:
-        await _reply(event.reply_token, f"❌ 檔案處理失敗：{str(e)[:120]}")
+        await _reply(event.reply_token, _friendly_error("檔案處理", e))
 
 
 async def handle_postback(
@@ -258,4 +264,4 @@ async def handle_postback(
 
             await _reply(event.reply_token, answer)
         except Exception as e:
-            await _reply(event.reply_token, f"❌ 搜尋失敗：{str(e)[:120]}")
+            await _reply(event.reply_token, _friendly_error("搜尋", e))

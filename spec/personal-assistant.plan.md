@@ -12,7 +12,8 @@
   - 2026-09-29 完成：3 passed；拿掉防護時 3 條都轉紅；mutation 3/3 caught。Sheets 的防護留到 T9 再加。conftest 裡重設 `_client`、`_store_name` 快取的那兩行，目前沒有測試會因為拿掉它們而轉紅，屬於預防性的寫法，不算進覆蓋率。
 - [x] T1：主模型改成 `gemini-3.8-flash`，新增 `GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite`；主模型重試用完後改用備援 — done when：模擬主模型連續回 503，確認最後改呼叫備援模型（AC1） (depends: T0)
   - 2026-09-29 完成：9 passed（6 條新測試）；mutation 5/5 caught（第一輪 3 個因為 CRLF 比對不到，沒有跑到，改成單行比對後重跑）。**部署注意**：`.env`（`gemini-2.5-flash`）和 Render 上的 `GEMINI_MODEL` 都會蓋掉程式預設值，T13 要把 Render 的改成 `gemini-3.8-flash`，並新增 `GEMINI_FALLBACK_MODEL`。
-- [ ] T2：所有錯誤都轉成中文說明，回覆裡不會出現原始錯誤字串 — done when：模擬兩個模型都失敗，回覆裡沒有 `503`、`{'error'`（AC2） (depends: T1)
+- [x] T2：所有錯誤都轉成中文說明，回覆裡不會出現原始錯誤字串 — done when：模擬兩個模型都失敗，回覆裡沒有 `503`、`{'error'`（AC2） (depends: T1)
+  - 2026-09-29 完成：5 個外洩點（文字查詢、圖片、檔案、背景存入 push、以圖搜尋）都改走 `_friendly_error()`，完整錯誤只寫進 log。20 passed（新增 11 條，每條路徑都測過載和一般錯誤兩種）；mutation 6/6 caught，另外用 UTF-8 重跑一個 mutant，確認失敗原因是「raw error leaked」那條斷言。
 - [ ] T3：改寫 `SYSTEM_PROMPT`：沒有相關文件時照樣直接回答，用到文件就附檔名，支援中越日翻譯 — done when：沒上傳文件的帳號問一般問題，得到直接回答（AC3，手動） (depends: T0)
 - [ ] T4：文字訊息改成先回 200、在背景產生回覆，用 reply token 回；超過 50 秒才改用 push — done when：模擬模型很慢時，webhook 仍在 1 秒內回 200 (depends: T0)
 - [ ] T5：**驗證** File Search 的 `metadata_filter` 支不支援 `user_id="U…" OR user_id="__kb__"`：建一個測試用 store、放兩份文件、各查一次，驗完刪掉 — done when：腳本輸出證明兩份都查得到、第三份（別的 user_id）查不到 (depends: —) ⚠ 用真的 API，但免費；不支援的話退回「兩個 store 分開查」，T7 跟著改
@@ -27,6 +28,8 @@
 - [ ] T14：更新 `CLAUDE.md` 和 `spec/architecture.md`：部署在 Render 而不是 Cloud Run，補上模型、KB、提醒的設計 — done when：文件裡找不到過時的 Cloud Run 部署說明 (depends: T13)
 
 - [ ] T15（2026-09-29 新增）：查清楚 Render 上設了 `GCS_BUCKET`，卻沒有任何 GCP 憑證的環境變數。`gcs.Client()` 很可能在上傳檔案時失敗 — done when：在 Render log 確認一次上傳走的是 GCS 還是失敗；失敗的話，改成拿掉 `GCS_BUCKET`（走本機 fallback）或補上憑證 (depends: T0)
+
+- [ ] T16（2026-09-29 新增，⚠ 安全）：`GET /store/info` 不需要驗證就會列出 store 裡**所有使用者上傳的檔名**，而且出錯時把原始錯誤回給呼叫者（`main.py:69`）；`/health` 也公開了 store 名稱 — done when：沒帶密鑰呼叫 `/store/info` 回 403（或整個端點移除），`/health` 只回 `{"status": "ok"}`，都有測試 (depends: T0)。**建議排在 T3 之前做**，因為它現在就在線上。
 
 **可以平行做的**：T5 可以隨時先做；T0 完成後，T1/T3/T4/T9 彼此獨立。
 
