@@ -267,6 +267,7 @@ KB_USER_ID = "__kb__"
 KB_SOURCE = "HJPLUS"
 _UNSAFE_ID = re.compile(r'["\\\s]')
 _kb_status_cache: Optional[dict] = None
+KB_UNVERIFIED_NOTE = "⚠️ 引用的法規知識庫內容尚未全部查證（待查證），請以法規原文或主管機關公告為準。"
 
 
 def _user_filter(user_id: str) -> str:
@@ -313,8 +314,9 @@ def _short_kb_title(title: str) -> str:
 
 def _with_sources(response) -> str:
     """Append sources computed from what was actually retrieved, plus a warning
-    when a KB source is marked unverified/draft. Deterministic, unlike asking
-    the model to cite, and the status lives in metadata the model rarely sees."""
+    unless every KB source is marked verified: most KB docs carry no status,
+    and unmarked is not checked. Deterministic, unlike asking the model to
+    cite, and the status lives in metadata the model rarely sees."""
     text = response.text or ""
     titles = _retrieved_titles(response)
     if not titles:
@@ -331,8 +333,8 @@ def _with_sources(response) -> str:
         except Exception as e:  # a missing warning must not cost the answer
             print(f"[KB] status lookup failed: {e}")
             statuses = {}
-        if any(statuses.get(t) in ("unverified", "draft") for t in kb):
-            lines.append("⚠️ 部分法規內容在知識庫標示為待查證，請以法規原文或主管機關公告為準。")
+        if any(statuses.get(t) != "verified" for t in kb):
+            lines.append(KB_UNVERIFIED_NOTE)
     return f"{text}\n\n" + "\n".join(lines)
 
 

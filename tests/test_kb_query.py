@@ -1,8 +1,9 @@
 """T7 / AC4 / AC5: queries see the caller's documents plus the shared HJPLUS KB,
 and answers carry their sources, computed from the grounding metadata rather
-than left to the model's discretion. KB entries marked unverified/draft add a
-"待查證" warning (retrieved chunks rarely include the frontmatter that holds
-the status, so the model cannot be relied on to notice it)."""
+than left to the model's discretion. Any KB source not marked verified adds a
+"待查證" warning: 296 of 332 KB docs carry no status at all, and an unmarked
+entry is not a checked one (retrieved chunks rarely include the frontmatter
+that holds the status, so the model cannot be relied on to notice it)."""
 import asyncio
 from types import SimpleNamespace
 
@@ -41,6 +42,7 @@ def _resp(text, titles):
 KB_STATUS = {
     "HJPLUS/建築法規/樓梯欄杆坡道/taiwan-stair-railing-ramp/SKILL.md": "unverified",
     "HJPLUS/建築法規/防火區劃/fire-compartment/SKILL.md": "verified",
+    "HJPLUS/設計理論/spatial-planning/SKILL.md": "",
 }
 
 
@@ -65,13 +67,42 @@ def test_kb_sources_are_attributed_and_shortened(kb):
     assert "HJPLUS" in out and "CC BY-SA 4.0" in out
     assert "防火區劃/fire-compartment" in out
     assert "SKILL.md" not in out
-    assert "待查證" not in out
+    assert gemini.KB_UNVERIFIED_NOTE not in out
 
 
-def test_unverified_kb_source_adds_a_warning(kb):
-    out = gemini._with_sources(_resp("回答", ["HJPLUS/建築法規/樓梯欄杆坡道/taiwan-stair-railing-ramp/SKILL.md"]))
+@pytest.mark.parametrize("title", [
+    "HJPLUS/建築法規/樓梯欄杆坡道/taiwan-stair-railing-ramp/SKILL.md",  # unverified
+    "HJPLUS/設計理論/spatial-planning/SKILL.md",  # no status
+    "HJPLUS/新主題/not-in-map/SKILL.md",  # unknown to the status map
+])
+def test_kb_source_not_marked_verified_adds_a_warning(kb, title):
+    out = gemini._with_sources(_resp("回答", [title]))
 
-    assert "待查證" in out
+    assert gemini.KB_UNVERIFIED_NOTE in out and "待查證" in out
+
+
+def test_one_unverified_source_among_verified_ones_still_warns(kb):
+    out = gemini._with_sources(_resp("回答", [
+        "HJPLUS/建築法規/防火區劃/fire-compartment/SKILL.md",
+        "HJPLUS/設計理論/spatial-planning/SKILL.md"]))
+
+    assert gemini.KB_UNVERIFIED_NOTE in out
+
+
+def test_status_lookup_failure_warns_rather_than_vouching(monkeypatch):
+    def boom():
+        raise RuntimeError("store unreachable")
+    monkeypatch.setattr(gemini, "_kb_status_map", boom)
+
+    out = gemini._with_sources(_resp("回答", ["HJPLUS/建築法規/防火區劃/fire-compartment/SKILL.md"]))
+
+    assert out.startswith("回答") and gemini.KB_UNVERIFIED_NOTE in out
+
+
+def test_user_documents_alone_never_warn(kb):
+    out = gemini._with_sources(_resp("回答", ["送審單.pdf"]))
+
+    assert gemini.KB_UNVERIFIED_NOTE not in out
 
 
 def test_kb_status_map_is_fetched_once(monkeypatch):

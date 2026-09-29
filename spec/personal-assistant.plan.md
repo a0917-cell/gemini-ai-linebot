@@ -25,7 +25,7 @@
 - [x] T6：`scripts/ingest_kb.py`：把 HJPLUS `raw\` 的 `.md` 上傳，標 `user_id="__kb__"`、`source=HJPLUS`；用顯示名稱判斷避免重複上傳；預設 dry-run — done when：dry-run 列出 332 份；實跑後 store 裡的 KB 文件數 = 332 (depends: T5) ⚠ 文件寫進正式 store；rollback：依 metadata 刪掉 `__kb__` 文件
   - 2026-09-29 完成：store `…c1v9232tcirj` 裡的 KB 文件數 = **332**，全部 ACTIVE，顯示名稱不重複；status：none 296、unverified 21、verified 8、draft 4。第一次跑少了 3 份：2 份是中文檔名（SDK 把檔名放進 HTTP 標頭，必須是 ASCII），修法是改用 ASCII 名稱的暫存副本上傳，並加了測試；另外 2 份是 `Server disconnected`（其中 1 份其實伺服器端已成功），重跑時因為會跳過已上傳的檔名，只補了缺的 3 份。當時看到的「exit code 0」是管線裡 `grep` 的結束碼，不是腳本本身的；重跑時沒接管線，腳本回 0。同日依使用者同意，刪除了空的重複 store `…4xwnfoqme9q8`（刪前確認 0 份文件，用 force=False 刪除）。
 - [x] T7：查詢 filter 改成「本人 OR KB」，prompt 要求法規答案附出處，KB 內容標示未查證的要加「待查證」 — done when：單元測試檢查 filter 字串（AC5）；手動問一題防火區劃，回答有出處 (depends: T5, T6)
-  - 2026-09-29 完成（8ca897f 已部署）：使用者在 LINE 問「樓梯最小寬度」，回答引用建築技術規則第 33 條，結尾附「📚 法規知識庫（HJPLUS，CC BY-SA 4.0）：建築設計施工編/樓梯欄杆坡道、…」。**待查證那一行不在截圖範圍內**，只有測試覆蓋，線上還沒親眼看到。
+  - 2026-09-29 完成（8ca897f 已部署）：使用者在 LINE 問「樓梯最小寬度」，回答引用建築技術規則第 33 條，結尾附「📚 法規知識庫（HJPLUS，CC BY-SA 4.0）：建築設計施工編/樓梯欄杆坡道、…」。**待查證那一行不在截圖範圍內**，只有測試覆蓋，線上還沒親眼看到。後續完整截圖確認沒有待查證行：三份來源在 store 裡都沒有 status，舊規則只對 unverified/draft 警告，所以行為正確；是我預告錯了。使用者同日決定改成「只要有一份不是 verified 就警告」（332 份只有 8 份 verified；查不到 status 時也警告，不替內容背書）。
 - [x] T8：使用者隔離的回歸測試：filter 裡一定有本人的 `user_id`，而且永遠不會只剩 KB — done when：AC4 的單元測試通過 (depends: T7)
   - 2026-09-29 完成：讀取端（文字查詢、以圖搜尋、handler 用寄件人的 LINE id）與寫入端（個人上傳不可標成 __kb__、extra_metadata 不可覆寫 user_id/source）共 7 條；寫入端兩個洞先 RED 再修。65 passed，mutation 4/4 caught。
 - [ ] T9：`app/reminders.py`：以 Sheets 為儲存（add / list_pending / list_due / mark_sent / cancel），測試用記憶體版替身 — done when：替身和介面契約測試通過；用真的 Sheet 手動寫一筆、讀一筆 (depends: T0) ⚠ Sheet 欄位格式等於資料格式，定了就不好改；rollback：換一張新 Sheet
