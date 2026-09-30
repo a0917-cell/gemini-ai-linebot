@@ -87,16 +87,17 @@ def _upload_one(client, store: str, path: Path, name: str) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         ascii_copy = Path(tmp) / "kb-document.md"
         shutil.copyfile(path, ascii_copy)
-        return _upload_with_retry(client, store, ascii_copy, name, status)
+        return _upload_with_retry(client, store, ascii_copy, name, metadata_for(status))
 
 
-def _upload_with_retry(client, store: str, path: Path, name: str, status: str) -> str:
+def _upload_with_retry(client, store: str, path: Path, name: str, metadata: list) -> str:
+    """Shared with scripts/ingest_laws.py, which passes its own metadata."""
     for attempt in range(5):
         try:
             op = client.file_search_stores.upload_to_file_search_store(
                 file_search_store_name=store, file=str(path),
                 config={"display_name": name, "mime_type": "text/markdown",
-                        "custom_metadata": metadata_for(status)},
+                        "custom_metadata": metadata},
             )
             while not op.done:
                 time.sleep(2)

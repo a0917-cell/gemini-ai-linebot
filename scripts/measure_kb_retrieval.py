@@ -6,9 +6,12 @@ questions? (plan T19)
 
 Sends each question with the exact config query_with_text uses
 (_text_query_config) and counts answers whose grounding metadata cites at least
-one HJPLUS document. Uses GEMINI_API_KEY from .env: this is billed on a paid
-key, about 10 short generations per run. The user id is a dummy, so only the
-shared KB is visible.
+one shared document (HJPLUS notes or LAW statute text). Uses GEMINI_API_KEY
+from .env, which on 2026-09-30 was the same free key production uses: two runs
+plus a probe exhausted the gemini-3.8-flash free quota and pushed the live bot
+onto the fallback model. Compare its last four characters with Render's first,
+and keep runs small. The user id is a dummy, so only shared documents are
+visible.
 """
 import argparse
 import asyncio
@@ -49,7 +52,8 @@ async def main(model: str) -> None:
         resp = await gemini._generate_with_retry(
             model=model, contents=q, config=gemini._text_query_config(store, DUMMY_USER)
         )
-        kb = [t for t in gemini._retrieved_titles(resp) if t.startswith(f"{gemini.KB_SOURCE}/")]
+        shared = (f"{gemini.KB_SOURCE}/", f"{gemini.LAW_SOURCE}/")  # HJPLUS notes or statute text (T20)
+        kb = [t for t in gemini._retrieved_titles(resp) if t.startswith(shared)]
         hits += bool(kb)
         print(f"{'KB ' if kb else '-- '} {q}  ({len(kb)} docs)", flush=True)
     print(f"model={model} kb_used={hits}/{len(QUESTIONS)}")

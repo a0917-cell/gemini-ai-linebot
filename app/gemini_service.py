@@ -273,6 +273,10 @@ KB_SOURCE = "HJPLUS"
 _UNSAFE_ID = re.compile(r'["\\\s]')
 _kb_status_cache: Optional[dict] = None
 KB_UNVERIFIED_NOTE = "⚠️ 引用的法規知識庫內容尚未全部查證（待查證），請以法規原文或主管機關公告為準。"
+# Statute text from the openlawtw snapshot (scripts/ingest_laws.py, plan T20):
+# official wording, so no 待查證, but frozen at this date.
+LAW_SOURCE = "LAW"
+LAW_SNAPSHOT = "2026-09-18"
 LAW_NO_KB_NOTE = "⚠️ 這個回答沒有引用法規知識庫，條文與數值請以全國法規資料庫原文為準。"
 
 # The model decides for itself whether to call File Search (the SDK cannot force
@@ -334,22 +338,34 @@ def _short_kb_title(title: str) -> str:
     return "/".join(parts[-2:]) if parts else title.split("/")[-1]
 
 
+def _short_law_title(title: str) -> str:
+    """LAW/建築技術規則建築設計施工編/第三章 建築物之防火.md -> 建築技術規則建築設計施工編／第三章 建築物之防火"""
+    parts = title.split("/")[1:]
+    if parts and parts[-1].endswith(".md"):
+        parts[-1] = parts[-1][:-3]
+    return "／".join(parts)
+
+
 def _with_sources(response, question: Optional[str] = None) -> str:
     """Append sources computed from what was actually retrieved, plus a warning
     unless every KB source is marked verified: most KB docs carry no status,
     and unmarked is not checked. Deterministic, unlike asking the model to
-    cite, and the status lives in metadata the model rarely sees. A law
-    question (when the question is known) answered without any KB source gets
-    LAW_NO_KB_NOTE instead."""
+    cite, and the status lives in metadata the model rarely sees. Statutes
+    (LAW) are official text: listed with their snapshot date, never 待查證. A
+    law question (when the question is known) answered without any HJPLUS or
+    statute source gets LAW_NO_KB_NOTE instead."""
     text = to_plain_text(response.text or "")
     titles = _retrieved_titles(response)
     kb = [t for t in titles if t.startswith(f"{KB_SOURCE}/")]
-    own = [t for t in titles if t not in kb]
+    law = [t for t in titles if t.startswith(f"{LAW_SOURCE}/")]
+    own = [t for t in titles if t not in kb and t not in law]
     lines = []
-    if not kb and question and is_law_question(question):
+    if not kb and not law and question and is_law_question(question):
         lines.append(LAW_NO_KB_NOTE)
     if own:
         lines.append("📎 來源：" + "、".join(own[:5]))
+    if law:
+        lines.append(f"📜 法規條文（全國法規資料庫，快照 {LAW_SNAPSHOT}）：" + "、".join(_short_law_title(t) for t in law[:3]))
     if kb:
         lines.append(f"📚 法規知識庫（{KB_SOURCE}，CC BY-SA 4.0）：" + "、".join(_short_kb_title(t) for t in kb[:3]))
         try:
