@@ -109,6 +109,6 @@ ISO 8601 with +08:00 to the second, written RAW.
 | LINE reply token: 1 minute | Background work; push after 50 s |
 | LINE free plan: 200 pushes/month | Reminders and slow answers share it; replies are free |
 | Render free: sleeps when idle, 750 h/month per workspace (shared with line-archiver-bot) | UptimeRobot every 5 min keeps it awake (744 h in a 31-day month) |
-| Gemini free tier: daily quota, content may improve Google products | Fallback model; privacy note on uploads; never measure on the production key |
+| Gemini free tier: **20 requests/day per project on gemini-3.8-flash** (reported by the API, 2026-09-30); flash-lite reportedly ~500 (third-party figure); content may improve Google products | A per-day 429 goes straight to the fallback model; privacy note on uploads; never measure on the production key |
 | File Search: no way to force a built-in tool | Law-question warning instead of a guarantee |
 | Single Render instance | In-memory session and tick lock are enough |
