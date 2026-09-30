@@ -41,6 +41,7 @@ every 5 minutes, timeout 60 s (a cold start takes about 42 s).
 - Custom headers are a paid feature, so the secret travels in the query string and appears in access logs. It only lets a caller run a tick early, and a tick sends only reminders already due.
 - UptimeRobot names a new monitor after its full URL, secret included: rename it.
 - A store outage answers 503, so the monitor emails the owner.
+- The account's other monitor, `line-archiver-bot.onrender.com/health`, was **paused on 2026-09-30, on purpose**. It had shown Down for three months only because that `/health` is GET-only and the free plan sends HEAD (GET 200, HEAD 405). Fixing it would keep the archiver awake around the clock too, and the two services together (~1,488 h) would exhaust the shared 750 h mid-month and suspend both. The archiver wakes on LINE webhooks instead (cold start ~30 s).
 
 ## One-time setup
 
