@@ -31,6 +31,10 @@ def _no_real_clients(monkeypatch):
     monkeypatch.setattr(line, "AsyncApiClient", _blocked("AsyncApiClient"))
     monkeypatch.setattr(reminders, "build", _blocked("sheets build"))
     monkeypatch.setattr(reminders, "_store", None)
+    # webhook dedupe memory: a fixed event id reused by two tests must not be
+    # skipped as a redelivery in whichever runs second
+    import app.main as main
+    monkeypatch.setattr(main, "_seen_events", {})
     # Module-level caches would otherwise carry a client or store name across tests.
     monkeypatch.setattr(gemini, "_client", None)
     monkeypatch.setattr(gemini, "_store_name", "")

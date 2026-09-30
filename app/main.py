@@ -38,6 +38,25 @@ async def startup() -> None:
         print(f"[Startup] Warning: Could not initialize store: {e}")
 
 
+# LINE may deliver an event again (redelivery, retries). Seen webhookEventIds
+# are kept for 6 hours in memory: Render runs one instance, and forgetting
+# them on restart was accepted (plan T25).
+EVENT_DEDUPE_SECONDS = 6 * 60 * 60
+_seen_events: dict = {}  # webhookEventId -> time.monotonic() when first seen
+
+
+def _already_seen(event_id: str) -> bool:
+    now = time.monotonic()
+    for eid in [e for e, t in _seen_events.items() if now - t > EVENT_DEDUPE_SECONDS]:
+        del _seen_events[eid]
+    if not event_id:
+        return False
+    if event_id in _seen_events:
+        return True
+    _seen_events[event_id] = now
+    return False
+
+
 def _require_admin(token: str) -> None:
     """403 unless the X-Admin-Token header matches ADMIN_TOKEN. Fails closed:
     with ADMIN_TOKEN unset, nothing gets in (an empty header must not match)."""
@@ -129,6 +148,9 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> str:
 
     for event in events:
         print(f"[Webhook] Processing event type: {type(event).__name__}")
+        if _already_seen(getattr(event, "webhook_event_id", "") or ""):
+            print(f"[Webhook] duplicate event {event.webhook_event_id}, skipped")
+            continue
         try:
             if isinstance(event, MessageEvent):
                 msg_type = type(event.message).__name__
