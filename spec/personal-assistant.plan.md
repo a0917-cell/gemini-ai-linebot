@@ -40,7 +40,8 @@
   - 2026-09-30 進度：Render 新增 7 個、改 1 個環境變數（使用者用「Import from .env」貼上機密值，按鈕由我按；貼上前重複的舊 GEMINI_MODEL 那列先刪掉）。UptimeRobot 監控「LINE assistant reminder tick」每 5 分鐘、逾時 60 秒；官方畫面證實免費方案只能用 HEAD（選 HTTP method 要付費）。Render 免費時數是整個 workspace 共用 750 小時（render.com/docs/free），全天開著 31 天就是 744 小時；9 月兩個服務合計只用 5.37 小時，使用者選擇維持每 5 分鐘。**AC6 通過**：07:52 設定「今天 8:05 提醒我測試提醒」（Gemini 正式解析成 08:05），08:06:49 標記 sent，使用者 08:06 在 LINE 收到。上線後發現 sent_at 帶微秒，已修正成寫到秒並補測試。**AC8 還沒測**（要閒置 1 小時後再傳訊息）。另外發現：gemini-3.8-flash 這次回答法規題時沒有呼叫 File Search，沒有出處也沒有待查證行，需要另開任務處理。
 - [ ] T14：更新 `CLAUDE.md` 和 `spec/architecture.md`：部署在 Render 而不是 Cloud Run，補上模型、KB、提醒的設計 — done when：文件裡找不到過時的 Cloud Run 部署說明 (depends: T13)
 
-- [ ] T15（2026-09-29 新增）：查清楚 Render 上設了 `GCS_BUCKET`，卻沒有任何 GCP 憑證的環境變數。`gcs.Client()` 很可能在上傳檔案時失敗 — done when：在 Render log 確認一次上傳走的是 GCS 還是失敗；失敗的話，改成拿掉 `GCS_BUCKET`（走本機 fallback）或補上憑證 (depends: T0)
+- [x] T15（2026-09-29 新增）：查清楚 Render 上設了 `GCS_BUCKET`，卻沒有任何 GCP 憑證的環境變數。`gcs.Client()` 很可能在上傳檔案時失敗 — done when：在 Render log 確認一次上傳走的是 GCS 還是失敗；失敗的話，改成拿掉 `GCS_BUCKET`（走本機 fallback）或補上憑證 (depends: T0)
+  - 2026-09-30 完成（推測被實測推翻）：使用者在 LINE 傳一張街景照片，bot 回「收到圖片」＋兩個按鈕（存檔成功）；按「存入資料庫」後，store 出現 image_634010256540434894.jpg，user_id 是本人、STATE_ACTIVE。所以上傳沒有壞，先前 0 份使用者文件只是還沒有人存過。我原本推測「沒有憑證，gcs.Client() 一定會失敗」是錯的。檔案走 GCS 還是本機暫存沒有確認（Render 後台把 GCS_BUCKET 的值藏起來了，要登入才看得到）；兩種都能用，本機暫存的檔案會累積到下次部署才清掉。
 
 - [x] T16（2026-09-29 新增，⚠ 安全；同日完成：要帶 `X-Admin-Token`，沒設 `ADMIN_TOKEN` 時預設關閉、回 403，錯誤不回傳原始內容，`/health` 只回 status；27 passed，mutation 4/4 caught；**要 push 部署才會在線上生效**）：`GET /store/info` 不需要驗證就會列出 store 裡**所有使用者上傳的檔名**，而且出錯時把原始錯誤回給呼叫者（`main.py:69`）；`/health` 也公開了 store 名稱 — done when：沒帶密鑰呼叫 `/store/info` 回 403（或整個端點移除），`/health` 只回 `{"status": "ok"}`，都有測試 (depends: T0)。**建議排在 T3 之前做**，因為它現在就在線上。
 
