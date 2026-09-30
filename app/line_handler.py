@@ -51,6 +51,13 @@ PRIVACY_NOTE = "🔒 提醒：這個助手用的是免費版 AI，內容可能�
 # Keep a margin; past this, answers go out by push instead.
 REPLY_TOKEN_BUDGET_S = 50
 
+# LINE: a text message holds at most 5,000 characters and a reply/push at most
+# 5 messages. MAX_TEXT leaves room for TRUNCATED_NOTE. A pushed answer split
+# into n pieces counts as n messages against the monthly quota.
+MAX_TEXT = 4900
+MAX_MESSAGES = 5
+TRUNCATED_NOTE = "\n（回答太長，後面省略）"
+
 # Reminder commands (plan T11). Anything else goes to the RAG answer.
 REMINDER_TRIGGER = "提醒我"
 LIST_COMMAND = "我的提醒"
@@ -86,16 +93,37 @@ def _choice_quick_reply() -> QuickReply:
     )
 
 
+def _text_messages(text: str, quick_reply: Optional[QuickReply] = None) -> list:
+    """LINE rejects a text message over 5,000 characters, and a request holding
+    one fails as a whole. Split at newlines where possible into at most
+    MAX_MESSAGES pieces (LINE's per-request cap); cut and say so beyond that.
+    The quick reply rides on the last piece."""
+    rest = text or "（沒有內容）"
+    parts = []
+    while rest and len(parts) < MAX_MESSAGES:
+        if len(rest) <= MAX_TEXT:
+            parts.append(rest)
+            rest = ""
+            break
+        cut = rest.rfind("\n", 0, MAX_TEXT)
+        if cut <= 0:
+            cut = MAX_TEXT
+        parts.append(rest[:cut])
+        rest = rest[cut:].lstrip("\n")
+    if rest:
+        parts[-1] = parts[-1][: MAX_TEXT - len(TRUNCATED_NOTE)] + TRUNCATED_NOTE
+    return [TextMessage(text=p) for p in parts[:-1]] + [TextMessage(text=parts[-1], quick_reply=quick_reply)]
+
+
 async def _reply(
     reply_token: str,
     text: str,
     quick_reply: Optional[QuickReply] = None,
 ) -> None:
-    msg = TextMessage(text=text, quick_reply=quick_reply)
     async with AsyncApiClient(configuration) as api_client:
         api = AsyncMessagingApi(api_client)
         await api.reply_message(
-            ReplyMessageRequest(reply_token=reply_token, messages=[msg])
+            ReplyMessageRequest(reply_token=reply_token, messages=_text_messages(text, quick_reply))
         )
 
 
@@ -103,7 +131,7 @@ async def _push(user_id: str, text: str, quick_reply: Optional[QuickReply] = Non
     async with AsyncApiClient(configuration) as api_client:
         api = AsyncMessagingApi(api_client)
         await api.push_message(
-            PushMessageRequest(to=user_id, messages=[TextMessage(text=text, quick_reply=quick_reply)])
+            PushMessageRequest(to=user_id, messages=_text_messages(text, quick_reply))
         )
 
 
