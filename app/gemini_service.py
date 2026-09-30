@@ -30,10 +30,12 @@ SYSTEM_PROMPT = (
     "一律用繁體中文（台灣用語）回答，除非使用者要求翻譯成其他語言。\n"
     "1. 一般問題、寫作、改寫、翻譯（中文、越南文、日文、英文）：直接回答，不需要引用資料庫。\n"
     "2. 使用者問到自己上傳的文件時：根據檔案搜尋結果回答，並在句尾標出來源檔名，例如「（來源：送審單.pdf）」。\n"
-    "3. 資料庫查不到相關內容時：不要只回「查無資料」，改用你的一般知識回答，並說明這不是出自使用者的文件。\n"
-    "4. 法規條文、數值、日期這類事實不確定時要直接說不確定，不要編造。\n"
-    "5. 使用者在手機上閱讀：回答簡潔，有步驟時用編號清單。\n"
-    "6. LINE 不支援 Markdown：不要用粗體符號、# 標題、表格或程式碼區塊，只用純文字、數字編號和「・」條列。"
+    "3. 台灣建築法規、消防、無障礙、防火、樓梯、停車、建蔽率容積率這類規範與數值問題：一定要先用檔案搜尋查法規知識庫，依查到的內容回答並說明出處；"
+    "法規知識庫查不到才用一般知識，並說明這不是出自知識庫。\n"
+    "4. 其他問題資料庫查不到相關內容時：不要只回「查無資料」，改用你的一般知識回答，並說明這不是出自使用者的文件。\n"
+    "5. 法規條文、數值、日期這類事實不確定時要直接說不確定，不要編造。\n"
+    "6. 使用者在手機上閱讀：回答簡潔，有步驟時用編號清單。\n"
+    "7. LINE 不支援 Markdown：不要用粗體符號、# 標題、表格或程式碼區塊，只用純文字、數字編號和「・」條列。"
 )
 
 _client: Optional[genai.Client] = None
@@ -271,6 +273,23 @@ KB_SOURCE = "HJPLUS"
 _UNSAFE_ID = re.compile(r'["\\\s]')
 _kb_status_cache: Optional[dict] = None
 KB_UNVERIFIED_NOTE = "⚠️ 引用的法規知識庫內容尚未全部查證（待查證），請以法規原文或主管機關公告為準。"
+LAW_NO_KB_NOTE = "⚠️ 這個回答沒有引用法規知識庫，條文與數值請以全國法規資料庫原文為準。"
+
+# The model decides for itself whether to call File Search (the SDK cannot force
+# a built-in tool) and cited the KB on 1 of 10 law questions (2026-09-30), so a
+# law question answered without a KB source is flagged. Domain words and
+# regulation words only: generic ones like 至少 / 最小 alone would flag writing
+# requests too.
+_LAW_WORDS = re.compile(
+    r"法規|法令|規則|規定|規範|條文|建築法|建築技術|消防|防火|耐燃|避難|逃生|"
+    r"樓梯|坡道|欄杆|扶手|走廊|淨高|淨寬|天花板|建蔽率|容積率?|退縮|停車位|"
+    r"無障礙|排煙|昇降機|採光|通風|步行距離|"
+    r"第\s*[0-9０-９一二三四五六七八九十百]+\s*條"
+)
+
+
+def is_law_question(text: str) -> bool:
+    return bool(text) and bool(_LAW_WORDS.search(text))
 
 
 def _user_filter(user_id: str) -> str:
@@ -315,18 +334,20 @@ def _short_kb_title(title: str) -> str:
     return "/".join(parts[-2:]) if parts else title.split("/")[-1]
 
 
-def _with_sources(response) -> str:
+def _with_sources(response, question: Optional[str] = None) -> str:
     """Append sources computed from what was actually retrieved, plus a warning
     unless every KB source is marked verified: most KB docs carry no status,
     and unmarked is not checked. Deterministic, unlike asking the model to
-    cite, and the status lives in metadata the model rarely sees."""
+    cite, and the status lives in metadata the model rarely sees. A law
+    question (when the question is known) answered without any KB source gets
+    LAW_NO_KB_NOTE instead."""
     text = to_plain_text(response.text or "")
     titles = _retrieved_titles(response)
-    if not titles:
-        return text
     kb = [t for t in titles if t.startswith(f"{KB_SOURCE}/")]
     own = [t for t in titles if t not in kb]
     lines = []
+    if not kb and question and is_law_question(question):
+        lines.append(LAW_NO_KB_NOTE)
     if own:
         lines.append("📎 來源：" + "、".join(own[:5]))
     if kb:
@@ -338,7 +359,23 @@ def _with_sources(response) -> str:
             statuses = {}
         if any(statuses.get(t) != "verified" for t in kb):
             lines.append(KB_UNVERIFIED_NOTE)
-    return f"{text}\n\n" + "\n".join(lines)
+    return f"{text}\n\n" + "\n".join(lines) if lines else text
+
+
+def _text_query_config(store_name: str, user_id: str) -> types.GenerateContentConfig:
+    """Shared by query_with_text and scripts/measure_kb_retrieval.py, so the
+    measurement exercises exactly what production sends."""
+    return types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        tools=[
+            types.Tool(
+                file_search=types.FileSearch(
+                    file_search_store_names=[store_name],
+                    metadata_filter=_user_filter(user_id),
+                )
+            )
+        ],
+    )
 
 
 async def query_with_text(text: str, user_id: str) -> str:
@@ -348,19 +385,9 @@ async def query_with_text(text: str, user_id: str) -> str:
     response = await _generate_with_retry(
         model=GEN_MODEL,
         contents=text,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[
-                types.Tool(
-                    file_search=types.FileSearch(
-                        file_search_store_names=[store_name],
-                        metadata_filter=_user_filter(user_id),
-                    )
-                )
-            ],
-        ),
+        config=_text_query_config(store_name, user_id),
     )
-    return _with_sources(response)
+    return _with_sources(response, question=text)
 
 
 async def query_with_image(image_bytes: bytes, mime_type: str, user_id: str) -> str:
