@@ -148,6 +148,20 @@ def test_row_format_is_pinned():
     assert fake.rows[1][4] == "sent" and fake.rows[1][6] == "2026-09-30T09:03:00+08:00"
 
 
+def test_times_are_written_to_the_second():
+    # /cron/tick passes datetime.now(), which carries microseconds; the sheet
+    # showed sent_at 08:06:49.829263+08:00 on the first live reminder (2026-09-30)
+    fake = FakeSheets()
+    store = rem.SheetsReminderStore(fake, "sheet-id")
+    r = store.add(A, T0.replace(microsecond=123456), "繳圖")
+
+    store.mark_sent(r.id, T0.replace(second=49, microsecond=829263))
+
+    row = fake.rows[1]
+    assert row[2] == "2026-09-30T09:00:00+08:00"
+    assert row[6] == "2026-09-30T09:00:49+08:00"
+
+
 def test_writes_are_raw_so_text_never_becomes_a_formula():
     fake = FakeSheets()
     store = rem.SheetsReminderStore(fake, "sheet-id")

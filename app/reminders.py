@@ -126,7 +126,9 @@ class InMemoryReminderStore(ReminderStore):
 
 
 def _fmt(dt: Optional[datetime]) -> str:
-    return dt.isoformat() if dt else ""
+    # To the second: callers pass datetime.now(), whose microseconds would
+    # otherwise land in the sheet (08:06:49.829263+08:00).
+    return dt.isoformat(timespec="seconds") if dt else ""
 
 
 def _parse_time(value: str) -> Optional[datetime]:
