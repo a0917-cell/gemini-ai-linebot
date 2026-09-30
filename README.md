@@ -1,221 +1,91 @@
-# LINE Bot Multimodal RAG
+# Gemini AI — LINE 個人助手
 
-LINE Bot 整合 **Gemini File Search API**，讓你透過 LINE 上傳文件或圖片建立知識庫，並用自然語言或圖片搜尋其中的內容。
+給台灣營造業施工繪圖／BIM 工程師用的 LINE 個人助手，核心是 **Gemini File Search**（Google 託管的 RAG）。
 
-> **使用者資料隔離**：每位 LINE 使用者只能存取自己上傳的資料，透過 LINE user ID 在 Gemini File Search Store 的 `custom_metadata` + `metadata_filter` 實作。
+改寫自 [kkdai/linebot-multimodal-rag](https://github.com/kkdai/linebot-multimodal-rag)：保留它的上傳、索引、以圖搜尋與使用者隔離設計，加上共用法規知識庫、提醒、來源標示，部署改在 Render。
+
+> **隱私**：用的是 Gemini 免費方案，內容可能被 Google 用來改進產品。請不要上傳公司機密或客戶資料；傳檔時 bot 也會提醒。
 
 ---
 
-## 功能
+## 能做什麼
 
-| 操作 | 說明 |
+| 你在 LINE 做的事 | 助手的反應 |
 |------|------|
-| 傳送 **PDF / 文件** | Bot 詢問：存入資料庫 or 作為搜尋 |
-| 傳送 **圖片** | Bot 詢問：存入資料庫 or 作為搜尋 |
-| 點選 **「📥 存入資料庫」** | 非同步建立索引（含 user_id metadata），完成後推播通知 |
-| 點選 **「🔍 作為搜尋」** | 以該圖片 / 文件作為查詢，僅從自己的資料中找相關內容 |
-| 輸入 **文字** | 直接對自己的資料庫做語意查詢（RAG） |
+| 一般問題、寫作、翻譯（中、越、日、英） | 直接回答 |
+| 問法規、規範、數值 | 先查共用知識庫；有引用會附來源，沒引用會加警告 |
+| 傳 **PDF／文件／圖片** | 問你要「📥 存入資料庫」還是「🔍 作為搜尋」 |
+| 問自己存過的資料 | 只從**你自己的**檔案和共用知識庫找，附檔名 |
+| 「明天 9 點提醒我繳圖」 | 回「⏰ 已設定：9/30（三）09:00 繳圖」，時間到推播 |
+| 「我的提醒」 | 列出還沒到的提醒，每筆可按鈕取消 |
 
-### 支援格式
-- 圖片：JPG、PNG、WebP 等
-- 文件：PDF、TXT、CSV、Markdown 等
-- 單檔上限：100 MB（Gemini File Search API 限制）
-- 不支援：音訊（mp3、wav）、影片（mp4、mov）
-
-### 搜尋能力
-- **文字查文字**：輸入問題 → 找自己上傳的 PDF / 文件中的相關段落
-- **圖片查資料庫**：傳圖片 → Gemini 理解圖片內容 → 找自己資料庫中的相關資訊（包含 PDF 內的圖文說明）
-- 跨語言：中文查詢英文文件也能運作（gemini-embedding-2 支援 100+ 語言）
-- **多租戶隔離**：每位使用者的資料完全分離，透過 `metadata_filter: user_id="U..."` 在查詢時過濾
-
----
-
-## 參考資料
-
-本專案的功能設計與 API 用法參考以下官方文件：
-
-- [Expanded Gemini API File Search: multimodal RAG](https://blog.google/innovation-and-ai/technology/developers-tools/expanded-gemini-api-file-search-multimodal-rag/) — Google Blog 公告（多模態 RAG、metadata filter、page citations）
-- [Gemini Embedding 2 model card](https://deepmind.google/models/gemini/embedding/) — Embedding 模型規格（5 種模態、8192 tokens、可變維度）
-- [Multimodal RAG with the Gemini API File Search tool: A Developer Guide](https://dev.to/googleai/multimodal-rag-with-the-gemini-api-file-search-tool-a-developer-guide-5878) — File Search API 完整程式碼範例
-- [File Search API documentation](https://ai.google.dev/gemini-api/docs/file-search?hl=zh-tw) — 官方文件（含 metadata filter 語法）
-
----
-
-## 技術架構
+### 回答結尾的來源行
 
 ```
-LINE App
-  │
-  │  Webhook (HTTPS)
-  ▼
-FastAPI (Cloud Run)
-  ├─ 文字訊息 ──────────────────► Gemini File Search → 回覆
-  ├─ 圖片 / 檔案 ─► GCS 備份 ──► Quick Reply 按鈕
-  └─ Postback 按鈕
-       ├─ 存入資料庫 ─► Background Task ─► Gemini 建索引 ─► Push 通知
-       └─ 作為搜尋 ──► GCS 讀取 ──────► Gemini File Search → 回覆
+📎 來源：送審單.pdf                                            你上傳的檔案
+📜 法規條文（全國法規資料庫，快照 2026-09-18）：建築技術規則建築設計施工編／第三章 建築物之防火
+📚 法規知識庫（HJPLUS，CC BY-SA 4.0）：建築設計施工編/樓梯欄杆坡道
+⚠️ 引用的法規知識庫內容尚未全部查證（待查證），請以法規原文或主管機關公告為準。
+⚠️ 這個回答沒有引用法規知識庫，條文與數值請以全國法規資料庫原文為準。
 ```
 
-**核心元件：**
-- **Gemini File Search API** — 托管式多模態 RAG（Google 處理 chunking、embedding、indexing）
-- **Embedding model**：`gemini-embedding-2`（文字 + 圖片同一向量空間）
-- **Generation model**：`gemini-3-flash-preview`（可透過環境變數 `GEMINI_MODEL` 調整）
-- **GCS**：上傳檔案的持久化儲存 + File Search Store 名稱記錄
-- **FastAPI BackgroundTasks**：避免建索引時佔住 LINE reply token（30 秒限制）
+來源行是程式依「實際檢索到的文件」產生的，不是模型自己寫的。模型要不要查知識庫由它自己決定（API 沒辦法強制），所以法規題沒查到時一定會出現最後那行警告。
+
+### 共用知識庫
+
+- **法規條文**：12 部核心法規（建築技術規則 4 編、建築法、各類場所消防安全設備設置標準、消防法、營造安全衛生設施標準、職業安全衛生設施規則、營造業法、建築物室內裝修管理辦法、都市計畫法），1,949 條，按章切成 104 份。來源是全國法規資料庫 2026-09-18 的快照（政府資料開放授權條款第 1 版），**現行條文請以全國法規資料庫為準**。
+- **HJPLUS 台灣建築師知識庫**：332 份實務筆記（CC BY-SA 4.0）。多數沒有標示查證狀態，所以引用時會加「待查證」。
+
+### 限制
+
+- 圖片、PDF、TXT、CSV、Markdown 可以；音訊、影片不行（File Search 的限制），單檔上限 100 MB
+- 傳檔後 5 分鐘內要選「存入」或「搜尋」
+- 提醒只做單次，不做每週、每月重複；會晚 0–5 分鐘送達
+- 句子裡有「提醒我」就會走提醒流程（例如「請提醒我建築法規第幾條」會被反問時間）
 
 ---
 
-## 安裝與本機開發
+## 架構
 
-### 環境需求
-- Python 3.12+
-- GCP 專案（需有 GCS bucket）
-- LINE Bot channel（Messaging API）
-- Gemini API Key（[Google AI Studio](https://aistudio.google.com)）
+```
+LINE ─► Render（FastAPI，免費方案，1 個 instance）
+          ├─ 文字 ─► 提醒指令？─► Google Sheets
+          │         └─ 其他 ─► Gemini File Search（本人檔案＋共用知識庫）─► 回覆／推播
+          ├─ 圖片／檔案 ─► 暫存 ─► 存入資料庫／作為搜尋
+          └─ /cron/tick ◄─ UptimeRobot 每 5 分鐘（送出到期提醒＋保持喚醒）
+```
 
-### 1. Clone & 安裝依賴
+- 生成模型：`gemini-3.8-flash`，忙線時改用 `gemini-3.5-flash-lite`
+- 嵌入模型：`gemini-embedding-2`
+- 所有人共用一個 File Search Store，用 metadata 的 `user_id` 隔離：查詢條件是「本人 OR 共用知識庫」，看不到別人的檔案
+
+詳細設計見 [spec/architecture.md](spec/architecture.md)，部署與環境變數見 [spec/deployment.md](spec/deployment.md)，需求與任務紀錄見 [spec/personal-assistant.md](spec/personal-assistant.md)。
+
+---
+
+## 本機開發
 
 ```bash
-git clone <your-repo-url>
-cd linebot-multimodal-rag
-
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 2. 設定環境變數
-
-```bash
-cp .env.example .env
-```
-
-編輯 `.env`：
-
-```env
-LINE_CHANNEL_SECRET=你的_line_channel_secret
-LINE_CHANNEL_ACCESS_TOKEN=你的_line_channel_access_token
-GEMINI_API_KEY=你的_gemini_api_key
-GCS_BUCKET=你的_gcs_bucket_名稱
-GEMINI_MODEL=gemini-3-flash-preview
-```
-
-| 變數 | 哪裡取得 |
-|------|---------|
-| `LINE_CHANNEL_SECRET` | LINE Developers Console → Messaging API → Channel Secret |
-| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Developers Console → Messaging API → Channel access token |
-| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/app/apikey) |
-| `GCS_BUCKET` | 自行建立的 GCS bucket 名稱 |
-
-### 3. GCS Bucket 建立（若尚未建立）
-
-```bash
-gsutil mb -l asia-east1 gs://你的-bucket-名稱
-```
-
-### 4. GCP 認證（本機開發）
-
-```bash
-gcloud auth application-default login
-```
-
-### 5. 啟動本機伺服器
-
-```bash
+.venv\Scripts\activate            # macOS/Linux: source .venv/bin/activate
+pip install -r requirements-dev.txt
+copy .env.example .env            # 填入 LINE、Gemini、GEMINI_STORE_NAME 等
 uvicorn app.main:app --reload --port 8080
+pytest -q
 ```
 
-啟動成功後會看到：
-```
-[Startup] File Search Store ready: fileSearchStores/xxxxxxxx
-```
+對外開放 webhook 可以用 cloudflared quick tunnel 或 ngrok，把 `https://<網址>/webhook` 填進 LINE Developers Console。
 
-### 6. 對外暴露 Webhook（ngrok）
+⚠️ 本機 `.env` 的 Gemini 金鑰如果跟正式環境是同一把，本機測試會吃掉正式環境的免費額度。
 
-```bash
-# 安裝 ngrok: https://ngrok.com
-ngrok http 8080
-```
+### 腳本
 
-取得 `https://xxxx.ngrok.io`，填入 LINE Developers Console：
-- Messaging API → Webhook URL → `https://xxxx.ngrok.io/webhook`
-- 開啟「Use webhook」
-
-### 7. 確認運作
-
-```bash
-# 健康檢查
-curl http://localhost:8080/health
-
-# 查看 File Search Store 狀態（已索引幾份文件）——要先在 .env 設 ADMIN_TOKEN，沒設時一律回 403
-curl -H "X-Admin-Token: $ADMIN_TOKEN" http://localhost:8080/store/info
-```
-
----
-
-## 部署到 GCP Cloud Run
-
-### 快速部署
-
-```bash
-# 確認已完成 spec/deployment.md 的 Step 1–5
-gcloud builds submit \
-  --config=cloudbuild.yaml \
-  --substitutions=_GCS_BUCKET=你的-bucket-名稱
-```
-
-### 取得 Webhook URL
-
-```bash
-gcloud run services describe linebot-multimodal-rag \
-  --region=asia-east1 \
-  --format='value(status.url)'
-```
-
-將 `{URL}/webhook` 填入 LINE Developers Console。
-
-詳細步驟見 [spec/deployment.md](spec/deployment.md)。
-
----
-
-## 如何使用 LINE Bot
-
-### 情境 1：上傳文件建立知識庫
-
-1. 開啟 LINE，找到你的 Bot
-2. 點選 **＋** → **檔案** → 選擇 PDF 或文字檔
-3. Bot 回覆：「📄 收到檔案：xxx.pdf，請問要：」
-4. 點選 **📥 存入資料庫**
-5. Bot 回覆：「⏳ 正在建立索引，完成後會通知您...」
-6. 等待幾秒到幾分鐘（依檔案大小），Bot 推播：「✅ 已成功存入資料庫！」
-
-### 情境 2：用文字查詢知識庫
-
-1. 直接在聊天框輸入問題，例如：
-   - `「第三季的營收是多少？」`
-   - `「退換貨政策是什麼？」`
-   - `「這個錯誤代碼代表什麼意思？」`
-2. Bot 根據已建立的資料庫回答，並引用相關內容
-
-### 情境 3：上傳圖片搜尋相關資料
-
-1. 點選 **＋** → **相簿** → 選擇圖片（例如：截圖、白板照片、產品圖）
-2. Bot 回覆：「🖼️ 收到圖片！請問要：」
-3. 點選 **🔍 作為搜尋**
-4. Bot 分析圖片內容，從資料庫找出相關資訊並回覆
-
-### 情境 4：將圖片也加入資料庫
-
-1. 傳送圖片（如產品照、圖表、截圖）
-2. 點選 **📥 存入資料庫**
-3. 圖片完成索引後，可以透過文字搜尋這張圖片的相關內容
-
-### 注意事項
-
-- 工作階段有效期 **5 分鐘**：傳送圖片 / 檔案後，需在 5 分鐘內選擇動作
-- 若超時請重新上傳
-- 所有使用者共用同一個資料庫（PoC 設計）
-- 不支援音訊與影片格式
+| 腳本 | 用途 |
+|------|------|
+| `scripts/ingest_laws.py` | 把法規條文按章上傳到知識庫（預設 dry run） |
+| `scripts/ingest_kb.py` | 上傳 HJPLUS 筆記（預設 dry run） |
+| `scripts/setup_reminder_sheet.py` | 一次性：Google 登入並建立提醒試算表；`--smoke` 冒煙測試 |
+| `scripts/measure_kb_retrieval.py` | 量法規題有多常引用知識庫（會用到真的額度） |
 
 ---
 
@@ -223,69 +93,26 @@ gcloud run services describe linebot-multimodal-rag \
 
 | 端點 | 方法 | 說明 |
 |------|------|------|
-| `/health` | GET | 服務健康檢查 |
-| `/store/info` | GET | File Search Store 狀態（文件數、索引狀態） |
-| `/webhook` | POST | LINE Bot Webhook 接收端點 |
-
-### `/store/info` 回傳範例
-
-```json
-{
-  "store_name": "fileSearchStores/abc123",
-  "display_name": "linebot-multimodal-rag",
-  "embedding_model": "models/gemini-embedding-2",
-  "document_count": 5,
-  "documents": [
-    {
-      "name": "fileSearchStores/abc123/documents/def456",
-      "display_name": "company_policy.pdf",
-      "state": "ACTIVE"
-    }
-  ]
-}
-```
-
----
-
-## 專案結構
-
-```
-linebot-multimodal-rag/
-├── app/
-│   ├── main.py           # FastAPI + webhook routing + /store/info
-│   ├── line_handler.py   # LINE 事件處理
-│   ├── gemini_service.py # Gemini File Search 封裝
-│   └── session.py        # 用戶工作階段（in-memory, 5min TTL）
-├── spec/
-│   ├── README.md         # 功能說明（精簡版）
-│   ├── architecture.md   # 系統架構與資料流詳解
-│   └── deployment.md     # GCP 完整部署步驟
-├── Dockerfile
-├── cloudbuild.yaml       # Cloud Build → Cloud Run 自動部署
-├── requirements.txt
-├── .env.example
-└── README.md             # 本文件
-```
+| `/webhook` | POST | LINE Webhook |
+| `/health` | GET | 只回 `{"status": "ok"}` |
+| `/cron/tick?key=…` | GET、HEAD | 送出到期提醒；沒有 `CRON_SECRET` 或 key 不對一律 403 |
+| `/store/info` | GET | 管理用，要帶 `X-Admin-Token`；沒設 `ADMIN_TOKEN` 時一律 403 |
 
 ---
 
 ## 疑難排解
 
-**Bot 沒有回應**
-- 確認 Webhook URL 正確填入 LINE Developers Console
-- 確認「Use webhook」已開啟
-- 檢查 `/health` 是否正常回應
+**回覆很慢或說「AI 忙線中」**：Gemini 免費額度用完或模型過載，會自動改用備援模型；額度每天重置。
 
-**「工作階段已過期」**
-- 傳送圖片 / 檔案後需在 5 分鐘內點選按鈕
-- 重新傳送檔案即可
+**提醒沒送到**：看 UptimeRobot 監控是不是 Up、LINE 每月 200 則推播額度有沒有用完、試算表那一列的 `status`。
 
-**存入資料庫沒有收到完成通知**
-- 大型 PDF 可能需要幾分鐘
-- 確認 `LINE_CHANNEL_ACCESS_TOKEN` 有效（有效期限 30 天，需定期更新或設為長期）
-- 查看 Cloud Run logs 確認是否有錯誤
+**Bot 完全沒反應**：確認 LINE Console 的 Webhook URL 和「Use webhook」、`/health` 有回應、Render 免費時數（每月 750 小時，跟同帳號其他服務共用）沒有用完。
 
-**搜尋結果不相關**
-- 確認相關文件已成功存入（`/store/info` 確認 state 為 ACTIVE）
-- 嘗試更具體的問題描述
-- 若為英文文件，中文查詢仍可運作（跨語言 embedding）
+---
+
+## 參考資料
+
+- [Expanded Gemini API File Search: multimodal RAG](https://blog.google/innovation-and-ai/technology/developers-tools/expanded-gemini-api-file-search-multimodal-rag/)
+- [Multimodal RAG with the Gemini API File Search tool: A Developer Guide](https://dev.to/googleai/multimodal-rag-with-the-gemini-api-file-search-tool-a-developer-guide-5878)
+- [File Search API documentation](https://ai.google.dev/gemini-api/docs/file-search?hl=zh-tw)
+- 上游專案：[kkdai/linebot-multimodal-rag](https://github.com/kkdai/linebot-multimodal-rag)

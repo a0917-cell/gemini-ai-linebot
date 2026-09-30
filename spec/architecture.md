@@ -4,144 +4,111 @@
 
 ```
 User (LINE App)
-    │
-    │  HTTPS Webhook
+    │  HTTPS webhook
     ▼
-LINE Platform
-    │
-    │  POST /webhook
-    ▼
-FastAPI (Cloud Run)
-    ├─── handle_text_message ──────────────────► Gemini File Search (query)
-    ├─── handle_image_message ─► GCS (store) ─► Quick Reply to user
-    ├─── handle_file_message ──► GCS (store) ─► Quick Reply to user
-    └─── handle_postback
-              ├── action=store ─► Background Task ─► Gemini File Search (index) ─► Push notify
-              └── action=search ─► GCS (load) ──────► Gemini File Search (query) ─► Reply
+LINE Platform ──────────────► POST /webhook
+                                   │
+FastAPI on Render (free, 1 instance)
+    ├── text ──► BackgroundTask ──┬── 我的提醒 / …提醒我… ─► reminders (Sheets) ─► reply
+    │                             └── anything else ─────► Gemini File Search ─► reply or push
+    ├── image / file ─► save (GCS or local disk) ─► quick reply: store / search
+    └── postback
+          ├── action=store ──────► BackgroundTask ─► File Search index ─► push "✅"
+          ├── action=search ─────► Gemini File Search (image or filename) ─► reply
+          └── action=cancel_reminder&id=… ─► reminders (Sheets) ─► reply
+
+UptimeRobot ── HEAD /cron/tick?key=… every 5 min ─► due reminders ─► LINE push
+                (also keeps the free instance awake)
 ```
 
 ## Components
 
-### FastAPI (`app/main.py`)
-- Handles LINE webhook signature verification
-- Routes events to handlers
-- Manages FastAPI BackgroundTasks for async indexing
+| Module | Role |
+|--------|------|
+| `app/main.py` | Webhook signature check and routing; `/health` (status only); `/store/info` (admin token, fails closed); `/cron/tick` (GET or HEAD, `CRON_SECRET`) |
+| `app/line_handler.py` | LINE events, reminder commands, `_deliver` (reply under 50 s, else push), friendly errors |
+| `app/gemini_service.py` | Store pinning, upload/index, text and image queries, model fallback, system prompt, sources footer |
+| `app/formatting.py` | Markdown → LINE plain text |
+| `app/reminders.py` | Reminder store: Sheets implementation + in-memory double, one contract |
+| `app/reminder_parse.py` | Gemini structured output → fields; `resolve()` applies the time rules |
+| `app/reminder_tick.py` | Sends due reminders; lock against overlapping ticks |
+| `app/session.py` | In-memory upload session, 5-minute TTL |
 
-### Session Store (`app/session.py`)
-- In-memory dict with 5-minute TTL
-- Stores pending file info between upload and user choice
-- **Production note**: Replace with Firestore for multi-instance Cloud Run
+## One store, three kinds of documents
 
-### Gemini Service (`app/gemini_service.py`)
-- `get_or_create_store()` — creates/loads File Search Store (name persisted in GCS)
-- `upload_and_index()` — uploads file to File Search Store, polls until indexed
-- `query_with_text()` — async RAG query using text
-- `query_with_image()` — async RAG query using image (with text fallback)
+| Kind | `user_id` | `source` | Other metadata | Display name |
+|------|-----------|----------|----------------|--------------|
+| User upload | LINE UID | – | – | original filename |
+| HJPLUS note | `__kb__` | `HJPLUS` | `status` (often absent) | `HJPLUS/<path>.md` |
+| Statute chapter | `__kb__` | `LAW` | `law_id`, `snapshot` | `LAW/<law>/<chapter>.md` |
 
-### LINE Handler (`app/line_handler.py`)
-- Downloads content from LINE CDN
-- Saves to GCS for persistence
-- Dispatches to gemini_service based on user action
+Query filter: `user_id="<LINE UID>" OR user_id="__kb__"`, applied server-side, so
+a user sees their own files plus the shared KB and never another user's files.
+User ids that could rewrite the filter (quote, backslash, whitespace) are
+rejected, and uploads refuse `__kb__` or caller-supplied `user_id` / `source`.
 
-## Key Design Decisions
+As of 2026-09-30: 332 HJPLUS notes (CC BY-SA 4.0), 104 statute chapters (1,949
+articles from 12 core building laws, MOJ snapshot 2026-09-18, Government Open
+Data License v1), plus user uploads.
 
-### Gemini File Search Store vs. Custom Vector DB
-Using managed `file_search_stores` API means:
-- Google handles chunking, embedding (gemini-embedding-2), indexing
-- Multimodal by default (text + images in same embedding space)
-- No self-managed vector database needed
-- Store persists independently of the application
+## Answer footer
 
-### File Storage (GCS)
-- All uploaded files saved to GCS before processing
-- Required because: LINE CDN URLs expire, and indexing is async
-- Path pattern: `uploads/{user_id}/{message_id}.{ext}`
-- Store name persisted at: `config/file_search_store_name.txt`
-
-### Async Indexing (BackgroundTasks)
-Gemini File Search upload can take 30s–5min for large files.
-- Reply token expires in 30s → cannot wait in the request
-- Solution: reply immediately, index in background, push notification when done
-
-### Image Search (with Fallback)
-Primary: Pass image bytes directly to generate_content with file_search tool.
-Fallback: If primary fails, use Gemini Vision to describe image → text query.
-
-## Data Flow: Store Image
+Built from grounding metadata (`_with_sources`), not from the model:
 
 ```
-1. User sends image
-2. LINE → POST /webhook (ImageMessageContent)
-3. Download image bytes from LINE CDN
-4. Upload to GCS: uploads/{user_id}/{msg_id}.jpg
-5. Store GCS path in session
-6. Reply: "🖼️ 收到圖片！請問要：" + Quick Reply buttons
-7. User taps "📥 存入資料庫"
-8. POST /webhook (PostbackEvent action=store)
-9. Reply: "⏳ 正在建立索引..."
-10. BackgroundTask starts:
-    a. Download file_bytes from GCS
-    b. Write to temp file
-    c. client.file_search_stores.upload_to_file_search_store(...)
-    d. Poll operation until done (max 5 min)
-    e. Push: "✅ 已成功存入資料庫！"
+📎 來源：送審單.pdf                                   own files
+📜 法規條文（全國法規資料庫，快照 2026-09-18）：…     statutes, no 待查證
+📚 法規知識庫（HJPLUS，CC BY-SA 4.0）：…              notes
+⚠️ …（待查證）…                                        unless every cited note is verified
+⚠️ 這個回答沒有引用法規知識庫…                         law question with no HJPLUS/LAW source
 ```
 
-## Data Flow: Text Query
+The model decides whether to call File Search at all. On 10 law questions it
+cited the shared KB once before the prompt change and three times after
+(2026-09-30); most misses were topics the notes never covered, which is why
+statute text was added.
+
+## Data flow: text question
 
 ```
-1. User sends text (LINE event has source.user_id = "U...")
-2. LINE → POST /webhook (TextMessageContent)
-3. client.aio.models.generate_content(
-       model=GEN_MODEL,
-       contents=text,
-       config=GenerateContentConfig(
-           tools=[Tool(file_search=FileSearch(
-               file_search_store_names=[store],
-               metadata_filter=f'user_id="{user_id}"'   # ← user isolation
-           ))]
-       )
-   )
-4. Gemini embeds query, searches ONLY this user's documents, generates answer
-5. Reply with answer
+1. Webhook answers LINE at once; handle_text_message runs in the background
+2. Loading animation (best effort)
+3. Reminder command? → reminders path (see below)
+4. generate_content(model, system_instruction, FileSearch(store, filter))
+   └── 429/503 after retries → same call on the fallback model
+5. to_plain_text + sources footer
+6. Reply if the token is < 50 s old, otherwise push
 ```
 
-## User Isolation
+## Data flow: reminder
 
-All users share **one File Search Store**, isolated via `custom_metadata`:
-
-### At upload time
-```python
-client.file_search_stores.upload_to_file_search_store(
-    file_search_store_name=store,
-    file=path,
-    config={
-        "display_name": filename,
-        "custom_metadata": [
-            {"key": "user_id", "string_value": "U1234567890abcdef..."}
-        ],
-    },
-)
+```
+set:    "明天 9 點提醒我繳圖" → Gemini fields {date, hour, minute, period_given, text}
+        → resolve(): no time → ask; past → refuse; "9 點" → nearest future 09:00/21:00;
+          date only → 09:00 → append row → "⏰ 已設定：9/30（三）09:00 繳圖" + cancel button
+list:   "我的提醒" → caller's pending rows, cancel buttons (≤ 13, labels ≤ 20 chars)
+send:   /cron/tick → list_due(now) → push → mark_sent (only if still pending)
+        push failed → stays pending, retried next tick; > 10 min late → says how late
 ```
 
-### At query time
-```python
-file_search=types.FileSearch(
-    file_search_store_names=[store],
-    metadata_filter='user_id="U1234567890abcdef..."',  # google.aip.dev/160 filter syntax
-)
+Sheet row (one-way door): `id | user_id | due_at | text | status | created_at | sent_at`,
+ISO 8601 with +08:00 to the second, written RAW.
+
+## Data flow: store an upload
+
+```
+1. Image/file → download from LINE → save (GCS if GCS_BUCKET, else tmp_uploads/)
+2. Session holds the path for 5 minutes; reply with privacy note + buttons
+3. "📥 存入資料庫" → background upload_to_file_search_store(user_id=UID) → poll → push "✅"
 ```
 
-The filter is applied server-side by Gemini — users **cannot** see or query each other's documents regardless of how they phrase the query.
+## Limits that shape the design
 
-**Note**: `/store/info` endpoint shows global store state (all documents). Protect it
-in production (e.g., IAM auth or admin token).
-
-## Scaling Notes
-
-| Component | Current (PoC) | Production Recommendation |
-|-----------|--------------|--------------------------|
-| Session store | In-memory (min-instances=1) | Cloud Firestore |
-| File Search Store | Single shared store + metadata_filter | Still single store; scale via metadata |
-| Cloud Run instances | min=1 (session) | Firestore allows min=0 |
-| `/store/info` endpoint | Open (PoC only) | Protect with IAM or admin token |
+| Limit | Consequence |
+|-------|-------------|
+| LINE reply token: 1 minute | Background work; push after 50 s |
+| LINE free plan: 200 pushes/month | Reminders and slow answers share it; replies are free |
+| Render free: sleeps when idle, 750 h/month per workspace (shared with line-archiver-bot) | UptimeRobot every 5 min keeps it awake (744 h in a 31-day month) |
+| Gemini free tier: daily quota, content may improve Google products | Fallback model; privacy note on uploads; never measure on the production key |
+| File Search: no way to force a built-in tool | Law-question warning instead of a guarantee |
+| Single Render instance | In-memory session and tick lock are enough |

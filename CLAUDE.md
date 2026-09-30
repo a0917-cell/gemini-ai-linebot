@@ -5,129 +5,108 @@ project state, design decisions, and gotchas that aren't obvious from the code.
 
 ## What this project is
 
-LINE Bot that integrates **Gemini File Search API** for multimodal RAG.
-Users upload files/images to LINE → Bot indexes into Gemini File Search Store →
-Users query via text or image, get answers grounded in their own documents.
+A personal LINE assistant ("Gemini AI" official account) for a Taiwan
+construction drafting / BIM engineer, built on **Gemini File Search** RAG.
+Forked from [kkdai/linebot-multimodal-rag](https://github.com/kkdai/linebot-multimodal-rag);
+spec and task log in `spec/personal-assistant.md` and `spec/personal-assistant.plan.md`.
 
-Deployment target: **GCP Cloud Run** (via Cloud Build).
+- General Q&A, writing, translation (zh / vi / ja / en)
+- The user's own uploaded files and images (per-user, isolated)
+- A shared knowledge base: HJPLUS practice notes + statute text of 12 core building laws
+- One-shot reminders ("明天 9 點提醒我繳圖")
+
+Deployment: **Render free web service**, auto-deployed from `main`. Not Cloud Run
+(the upstream target); see `spec/deployment.md`.
 
 ## Important design decisions (don't undo without asking)
 
-### 1. Use Gemini File Search Store, not a custom vector DB
-We use the **managed** `client.file_search_stores` API. Google handles chunking,
-embedding (gemini-embedding-2), and indexing. Do NOT add ChromaDB / FAISS /
-pgvector / etc. — that defeats the point.
+### 1. Gemini File Search Store, not a custom vector DB
+The managed `client.file_search_stores` API does chunking, embedding and
+indexing. Do NOT add ChromaDB / FAISS / pgvector.
 
-### 2. Single shared store + metadata filtering for multi-tenancy
-All users share ONE File Search Store. Per-user isolation is via:
-- Upload: `custom_metadata: [{"key": "user_id", "string_value": <LINE UID>}]`
-- Query: `metadata_filter='user_id="<LINE UID>"'`
+### 2. One store; per-user isolation plus a shared KB, via metadata
+- User uploads: `user_id=<LINE UID>`
+- Shared KB: `user_id="__kb__"`, `source` = `HJPLUS` (notes, may carry `status`) or `LAW` (statutes, `snapshot`)
+- Query filter: `user_id="<LINE UID>" OR user_id="__kb__"` (`_user_filter`; OR proved against the real API in `scripts/spike_or_filter.py`). Unsafe ids (quote, backslash, whitespace) raise.
+- A personal upload can never be tagged `__kb__`, and extra metadata may not set `user_id` / `source`.
+- The store is pinned with `GEMINI_STORE_NAME`; the project once held two stores with the same display name.
 
-The filter is enforced **server-side** by Gemini. Do NOT switch to per-user
-stores unless quota becomes an issue — managing N stores is operational pain.
+### 3. Sources come from grounding metadata, not from the model
+`_with_sources` appends what was actually retrieved: 📎 own files, 📜 statutes
+(with snapshot date), 📚 HJPLUS notes. HJPLUS citations get the 待查證 note unless
+every cited note is `status: verified` (296 of 332 carry no status). A law
+question (`is_law_question`, keyword list) answered with no HJPLUS or LAW
+source gets `LAW_NO_KB_NOTE`: the model decides for itself whether to call File
+Search and the SDK cannot force a built-in tool.
 
-### 3. Async indexing via FastAPI BackgroundTasks
-LINE reply tokens expire in 30s; indexing takes 30s–5min. So:
-- Upload flow: reply immediately ("⏳ 建立索引中…") → background task does upload
-  + polling → `push_message` notification when done.
-- Search/text flow: synchronous within 30s budget.
+### 4. Reply within the token budget, then push
+Text runs as a BackgroundTask; `_deliver` replies while the reply token is under
+50 s old, otherwise pushes (pushes count against the LINE monthly quota: 200 on
+the free plan). Model output is flattened to plain text (`app/formatting.py`):
+LINE renders no Markdown.
 
-### 4. Session store is in-memory with 5-min TTL
-Cloud Run is stateless, so this only works with `min-instances=1`. For
-production multi-instance scaling, swap to Firestore. The session only holds
-"user just uploaded this file, waiting for them to pick store-or-search."
+### 5. Free Gemini tier, stable models with fallback
+`gemini-3.8-flash`, falling back to `gemini-3.5-flash-lite` on transient errors
+(429 / 503). Free-tier content may be used to improve Google's products, so file
+prompts carry `PRIVACY_NOTE`. The key in `.env` has been the same free key
+production uses: measuring on it eats the live quota (it did, 2026-09-30).
 
-### 5. Files persisted to GCS
-- `uploads/{user_id}/{message_id}.{ext}` — user uploads
-- `config/file_search_store_name.txt` — the File Search Store name
-- LINE CDN URLs expire and we may handle the postback on a different instance.
+### 6. Reminders live in Google Sheets, triggered by UptimeRobot
+`app/reminders.py` (row format is a one-way door, ISO +08:00 to the second,
+RAW writes), `app/reminder_parse.py` (Gemini only splits fields; `resolve()`
+owns the rules), `app/reminder_tick.py` (push first, mark after; failed pushes
+retry next tick). UptimeRobot calls `/cron/tick?key=CRON_SECRET` every 5
+minutes: it is both the reminder clock and the keep-warm. If the monitor stops,
+reminders stop.
+
+### 7. Session store is in-memory with 5-min TTL
+Fine while Render runs a single instance; it only holds "user uploaded this file,
+waiting for store-or-search".
 
 ## Tech stack snapshot
 
-- Python 3.12, FastAPI, uvicorn
-- `line-bot-sdk` v3 (async API: `AsyncMessagingApi`, `AsyncMessagingApiBlob`)
-- `google-genai` SDK (the NEW one, not `google-generativeai`)
-- `google-cloud-storage`
-- Default Gemini model: **`gemini-3-flash-preview`** (env var `GEMINI_MODEL`)
-- Embedding model: `models/gemini-embedding-2` (multimodal)
-
-## Key API call shapes (so you don't have to rediscover)
-
-### Create File Search Store
-```python
-store = client.file_search_stores.create(config={
-    "display_name": "linebot-multimodal-rag",
-    "embedding_model": "models/gemini-embedding-2",
-})
-```
-
-### Upload with user metadata
-```python
-operation = client.file_search_stores.upload_to_file_search_store(
-    file_search_store_name=store.name,
-    file=tmp_path,
-    config={
-        "display_name": filename,
-        "custom_metadata": [{"key": "user_id", "string_value": user_id}],
-    },
-)
-# operation is long-running — poll: client.operations.get(operation)
-```
-
-### Query with user filter
-```python
-response = await client.aio.models.generate_content(
-    model=GEN_MODEL,
-    contents=text,  # or Content(parts=[image_part, text_part])
-    config=types.GenerateContentConfig(
-        tools=[types.Tool(file_search=types.FileSearch(
-            file_search_store_names=[store_name],
-            metadata_filter=f'user_id="{user_id}"',  # google.aip.dev/160 filter
-        ))],
-    ),
-)
-```
+- Python 3.12 (local venv 3.11), FastAPI, uvicorn
+- `line-bot-sdk` v3 async; `google-genai` (the new SDK); `google-api-python-client` for Sheets
+- Embedding: `models/gemini-embedding-2`
 
 ## File map (where to look first)
 
 | File | Purpose |
 |------|---------|
-| `app/main.py` | FastAPI app, webhook endpoint, `/health`, `/store/info` |
-| `app/line_handler.py` | LINE event handlers (text/image/file/postback) |
-| `app/gemini_service.py` | All Gemini File Search API calls |
+| `app/main.py` | Webhook, `/health`, `/store/info` (needs `X-Admin-Token`), `/cron/tick` |
+| `app/line_handler.py` | LINE events; reminder commands; reply/push delivery |
+| `app/gemini_service.py` | File Search, model fallback, prompt, sources footer, law-question check |
+| `app/formatting.py` | Markdown to LINE plain text |
+| `app/reminders.py` / `reminder_parse.py` / `reminder_tick.py` | Reminder store, time parsing, sending |
 | `app/session.py` | In-memory session w/ TTL |
-| `spec/architecture.md` | System design + data flows + scaling notes |
-| `spec/deployment.md` | GCP setup steps (APIs, IAM, secrets, deploy) |
-| `cloudbuild.yaml` | Build → push → deploy to Cloud Run |
+| `scripts/ingest_kb.py` / `ingest_laws.py` | Upload HJPLUS notes / statute chapters (dry run by default) |
+| `scripts/setup_reminder_sheet.py` | One-time Google sign-in + reminder sheet creation; `--smoke` |
+| `scripts/measure_kb_retrieval.py` | How often law questions cite the shared KB (uses real quota) |
+| `spec/architecture.md` / `spec/deployment.md` | Design and data flows / Render setup |
 
-## Things NOT yet done (potential next tasks)
+## Testing
 
-- ~~`/store/info` is unauthenticated~~ — done 2026-09-29: needs `X-Admin-Token` == `ADMIN_TOKEN`, 403 when `ADMIN_TOKEN` is unset (fails closed); `/health` returns only `{"status": "ok"}`
-- Session store still in-memory (need Firestore for min-instances=0)
-- No deletion flow — users can't remove their own documents via LINE
-- No quota/rate limiting per user
-- No support for audio/video (Gemini File Search limitation)
-- LINE access token expiry (30 days) — needs rotation or long-lived token
+`pytest -q` (tests/). `tests/conftest.py` blocks real Gemini, LINE, GCS and
+Sheets clients, because `.env` holds live credentials. New guards get a mutation
+probe: break the guarded line and confirm a test turns red.
 
-## How to run locally (quick)
+## Not done yet
+
+- AC8 check: reply within 30 s after an hour idle
+- No deletion flow for a user's own documents via LINE
+- No per-user quota or rate limiting
+- Audio / video are not supported by File Search
+- Whether uploads land in GCS or on Render's local disk depends on the value of `GCS_BUCKET` on Render, which has not been checked
+
+## How to run locally
 
 ```bash
-cp .env.example .env  # fill in LINE secrets, GEMINI_API_KEY, GCS_BUCKET
-gcloud auth application-default login
+cp .env.example .env    # LINE secrets, GEMINI_API_KEY, GEMINI_STORE_NAME ...
 uvicorn app.main:app --reload --port 8080
-ngrok http 8080  # set webhook URL in LINE Console
 ```
-
-## How to deploy
-
-```bash
-gcloud builds submit --config=cloudbuild.yaml \
-  --substitutions=_GCS_BUCKET=<your-bucket>
-```
-
-Full setup steps (one-time IAM + secrets): `spec/deployment.md`.
+Expose the port with a tunnel (e.g. cloudflared) and set `https://<tunnel>/webhook` in the LINE console.
 
 ## GitHub remote
 
-`git@github.com:kkdai/linebot-multimodal-rag.git` (branch: `main`)
-Commits use **Evan Lin <evan.if.lin@linecorp.com>** identity.
+`https://github.com/a0917-cell/gemini-ai-linebot.git` (branch `main`, Render
+deploys every push). Commits use the `tkgcc` identity.

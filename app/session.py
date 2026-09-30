@@ -4,7 +4,8 @@ from typing import Any, Optional
 
 class SessionStore:
     """In-memory session store with TTL.
-    NOTE: Use Firestore for multi-instance production (Cloud Run min-instances=1 for PoC).
+    Enough while Render runs a single instance; more than one instance would
+    need a shared store (e.g. Firestore), since the postback may land elsewhere.
     """
 
     def __init__(self, ttl_seconds: int = 300):
