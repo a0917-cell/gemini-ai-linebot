@@ -235,6 +235,13 @@ def _is_transient(exc: Exception) -> bool:
     return any(m in str(exc).lower() for m in _TRANSIENT_MARKERS)
 
 
+def _is_daily_quota(exc: Exception) -> bool:
+    """429 from a per-day quota (free tier: 20 requests/day on gemini-3.8-flash,
+    quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier). Retrying within
+    seconds cannot succeed, so the caller should move to the fallback at once."""
+    return "perday" in str(exc).lower()
+
+
 async def _generate_with_retry(*, max_retries: int = 3, **kwargs):
     """Call generate_content with backoff; if the model stays overloaded, try
     FALLBACK_MODEL (one retry) before giving up. Non-transient errors raise
@@ -255,7 +262,7 @@ async def _retry_loop(max_retries: int, **kwargs):
         try:
             return await get_client().aio.models.generate_content(**kwargs)
         except Exception as e:
-            if not _is_transient(e):
+            if not _is_transient(e) or _is_daily_quota(e):
                 raise
             last_exc = e
             if attempt < max_retries:

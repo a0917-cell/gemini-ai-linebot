@@ -87,3 +87,46 @@ def test_both_models_overloaded_raises_transient_error(fake):
         asyncio.run(gemini._generate_with_retry(model=PRIMARY, contents="hi"))
     assert gemini._is_transient(exc.value)
     assert models.calls[-1] == FALLBACK
+
+
+# --- T22: a daily quota does not come back within seconds ---
+
+# The shape of the real error, 2026-09-30 (message trimmed).
+DAILY = ("429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota "
+         "... limit: 20, model: gemini-3.8-flash', 'details': [{'violations': [{'quotaId': "
+         "'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaValue': '20'}]}]}}")
+PER_MINUTE = ("429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'details': [{'violations': [{'quotaId': "
+              "'GenerateRequestsPerMinutePerProjectPerModel-FreeTier'}]}]}}")
+
+
+def test_daily_quota_goes_straight_to_the_fallback(fake):
+    models = fake(fail_models={PRIMARY}, error=DAILY)
+
+    resp = asyncio.run(gemini._generate_with_retry(model=PRIMARY, contents="hi"))
+
+    assert resp.text == f"answer from {FALLBACK}"
+    assert models.calls == [PRIMARY, FALLBACK]  # no retries against an exhausted day
+
+
+def test_per_minute_limit_is_still_retried(fake):
+    models = fake(fail_models={PRIMARY}, error=PER_MINUTE)
+
+    asyncio.run(gemini._generate_with_retry(model=PRIMARY, contents="hi"))
+
+    assert models.calls.count(PRIMARY) == 4
+
+
+def test_daily_quota_on_both_models_raises_without_retrying(fake):
+    models = fake(fail_models={PRIMARY, FALLBACK}, error=DAILY)
+
+    with pytest.raises(Exception) as exc:
+        asyncio.run(gemini._generate_with_retry(model=PRIMARY, contents="hi"))
+
+    assert models.calls == [PRIMARY, FALLBACK]
+    assert gemini._is_transient(exc.value)  # the user still gets "AI 忙線中", not a raw error
+
+
+def test_daily_quota_is_recognised():
+    assert gemini._is_daily_quota(Exception(DAILY))
+    assert not gemini._is_daily_quota(Exception(PER_MINUTE))
+    assert not gemini._is_daily_quota(Exception("503 UNAVAILABLE: high demand"))
