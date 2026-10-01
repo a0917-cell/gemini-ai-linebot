@@ -151,6 +151,16 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> str:
         if _already_seen(getattr(event, "webhook_event_id", "") or ""):
             print(f"[Webhook] duplicate event {event.webhook_event_id}, skipped")
             continue
+        user_id = getattr(getattr(event, "source", None), "user_id", None)
+        if not line_handler.is_allowed(user_id):
+            print(f"[Webhook] user not in ALLOWED_USER_IDS, ignored: {str(user_id)[:6]}…")
+            token = getattr(event, "reply_token", None)
+            if token:
+                try:
+                    await line_handler.reply_private(token)
+                except Exception as e:
+                    print(f"[Webhook] private reply failed: {e}")
+            continue
         try:
             if isinstance(event, MessageEvent):
                 msg_type = type(event.message).__name__

@@ -73,6 +73,7 @@
   - 2026-09-30 完成（未部署）：`_is_daily_quota` 認錯誤訊息裡的 PerDay，`_retry_loop` 碰到就直接拋出，由外層改用備援模型。246 passed，mutation 3/3（第 4 個 mutant 是我寫錯的：換成 ValueError 時訊息照樣帶著 429，行為沒變，不算數）。
 - [x] T23（2026-10-01，參考 goingli0324/line-ai-assistant 發現）：LINE 單則文字上限 5,000 字，我們完全沒處理；太長的回答 reply 和 push 都會被拒，使用者什麼都收不到。使用者決定：切成多則，每則約 4,900 字，盡量在換行處切，最多 5 則（LINE 一次回覆的上限），超過就截斷並註明；quick reply 掛在最後一則 — done when：短訊息 1 則；長訊息每則都不超過上限、內容不遺失；超過 5 則時截斷並註明；reply 和 push 都走同一套切法（測試）(depends: T11)
   - 2026-10-01 完成（未部署）：`_text_messages` 讓 `_reply` 和 `_push` 共用同一套切法。254 passed，mutation 9/9。
-- [ ] T24（同上）：誰加好友都能用，陌生人會吃掉每天 20 次的主模型額度。使用者決定：用環境變數白名單 ALLOWED_USER_IDS（逗號分隔）；沒設定就一律拒絕（跟 ADMIN_TOKEN、CRON_SECRET 一樣 fail closed），所以要先在 Render 設好再部署；陌生人只收到一句 reply（不算額度），不會呼叫 Gemini — done when：白名單內照常；白名單外所有事件（文字、圖片、檔案、postback）都不進 handler，只回私人助理；沒設定時全部擋掉（測試）(depends: T4)
+- [x] T24（同上）：誰加好友都能用，陌生人會吃掉每天 20 次的主模型額度。使用者決定：用環境變數白名單 ALLOWED_USER_IDS（逗號分隔）；沒設定就一律拒絕（跟 ADMIN_TOKEN、CRON_SECRET 一樣 fail closed），所以要先在 Render 設好再部署；陌生人只收到一句 reply（不算額度），不會呼叫 Gemini — done when：白名單內照常；白名單外所有事件（文字、圖片、檔案、postback）都不進 handler，只回私人助理；沒設定時全部擋掉（測試）(depends: T4)
+  - 2026-10-01 完成（未部署，**要先在 Render 設 ALLOWED_USER_IDS 再 push**）：`line_handler.is_allowed`、`reply_private`，在 `main.py` webhook 去重之後檢查。271 passed，mutation 6/6（A4「空白項目留在集合裡」是等價 mutant：`bool(user_id)` 會先擋掉空 ID）。原有兩個 webhook 測試改成明確設定白名單。
 - [x] T25（同上）：沒有處理 LINE 的重送事件，開了 webhook 重送的話，同一則「提醒我」會建兩次。使用者決定：用記憶體記 webhookEventId 6 小時（Render 只有 1 個 instance；重啟後記錄會清空，這點接受）— done when：同一個 webhookEventId 第二次送來不處理；不同事件照常；過期的會被清掉，不會一直長大（測試）(depends: T4)
   - 2026-10-01 完成（未部署）：在 `main.py` 的 webhook 迴圈裡用 `_already_seen` 判斷，逐一檢查每個事件。259 passed，mutation 4/4（V4「空 ID 也被記下來」第一輪沒被抓到，補了測試）。conftest 每條測試都會重設 `_seen_events`，因為既有測試共用固定的 `01EVENT`。

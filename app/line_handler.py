@@ -57,6 +57,7 @@ REPLY_TOKEN_BUDGET_S = 50
 MAX_TEXT = 4900
 MAX_MESSAGES = 5
 TRUNCATED_NOTE = "\n（回答太長，後面省略）"
+PRIVATE_NOTE = "這是私人助理，目前不對外提供服務。"
 
 # Reminder commands (plan T11). Anything else goes to the RAG answer.
 REMINDER_TRIGGER = "提醒我"
@@ -91,6 +92,19 @@ def _choice_quick_reply() -> QuickReply:
             ),
         ]
     )
+
+
+def is_allowed(user_id: Optional[str]) -> bool:
+    """Only LINE users in ALLOWED_USER_IDS (comma-separated) may use the bot:
+    strangers would spend the owner's 20 free requests a day. Read at call
+    time; unset or empty means nobody (fails closed, plan T24)."""
+    allowed = {u.strip() for u in os.environ.get("ALLOWED_USER_IDS", "").split(",") if u.strip()}
+    return bool(user_id) and user_id in allowed
+
+
+async def reply_private(reply_token: str) -> None:
+    """The one answer a stranger gets. A reply costs no push quota and no Gemini call."""
+    await _reply(reply_token, PRIVATE_NOTE)
 
 
 def _text_messages(text: str, quick_reply: Optional[QuickReply] = None) -> list:

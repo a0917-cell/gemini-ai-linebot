@@ -50,6 +50,7 @@ def _sign(body):
 
 def test_webhook_schedules_text_handling_instead_of_awaiting_it(monkeypatch):
     monkeypatch.setattr(main, "parser", WebhookParser(SECRET))
+    monkeypatch.setenv("ALLOWED_USER_IDS", "U1")  # T24: the webhook serves listed users only
     ran = []
 
     async def handler(event, received_at=None):

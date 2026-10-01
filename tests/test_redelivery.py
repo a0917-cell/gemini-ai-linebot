@@ -48,6 +48,7 @@ def hook(monkeypatch):
     monkeypatch.setattr(main, "parser", WebhookParser(SECRET))
     monkeypatch.setattr(line, "handle_text_message", handler)
     monkeypatch.setattr(main, "_seen_events", {})
+    monkeypatch.setenv("ALLOWED_USER_IDS", "U1")  # T24: the webhook serves listed users only
     clock = {"now": 1000.0}
     monkeypatch.setattr(main.time, "monotonic", lambda: clock["now"])
 
