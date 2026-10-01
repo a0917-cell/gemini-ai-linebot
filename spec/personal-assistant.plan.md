@@ -75,5 +75,6 @@
   - 2026-10-01 完成（未部署）：`_text_messages` 讓 `_reply` 和 `_push` 共用同一套切法。254 passed，mutation 9/9。
 - [x] T24（同上）：誰加好友都能用，陌生人會吃掉每天 20 次的主模型額度。使用者決定：用環境變數白名單 ALLOWED_USER_IDS（逗號分隔）；沒設定就一律拒絕（跟 ADMIN_TOKEN、CRON_SECRET 一樣 fail closed），所以要先在 Render 設好再部署；陌生人只收到一句 reply（不算額度），不會呼叫 Gemini — done when：白名單內照常；白名單外所有事件（文字、圖片、檔案、postback）都不進 handler，只回私人助理；沒設定時全部擋掉（測試）(depends: T4)
   - 2026-10-01 完成（未部署，**要先在 Render 設 ALLOWED_USER_IDS 再 push**）：`line_handler.is_allowed`、`reply_private`，在 `main.py` webhook 去重之後檢查。271 passed，mutation 6/6（A4「空白項目留在集合裡」是等價 mutant：`bool(user_id)` 會先擋掉空 ID）。原有兩個 webhook 測試改成明確設定白名單。
+  - 2026-10-01 部署：先在 Render 加了 ALLOWED_USER_IDS（擁有者的 LINE ID，Render 共 13 個變數），重新部署舊版確認 bot 正常，再 push 0408c31。push 後使用者在 LINE 傳訊息，回覆正常，代表擁有者有被放行。沒確認的部分：內建瀏覽器打不開 Render，看不到 Deploy live 的時間點，所以理論上那次回覆也可能是舊版；陌生人被擋下的這條路徑，在正式環境還沒有實測過。
 - [x] T25（同上）：沒有處理 LINE 的重送事件，開了 webhook 重送的話，同一則「提醒我」會建兩次。使用者決定：用記憶體記 webhookEventId 6 小時（Render 只有 1 個 instance；重啟後記錄會清空，這點接受）— done when：同一個 webhookEventId 第二次送來不處理；不同事件照常；過期的會被清掉，不會一直長大（測試）(depends: T4)
   - 2026-10-01 完成（未部署）：在 `main.py` 的 webhook 迴圈裡用 `_already_seen` 判斷，逐一檢查每個事件。259 passed，mutation 4/4（V4「空 ID 也被記下來」第一輪沒被抓到，補了測試）。conftest 每條測試都會重設 `_seen_events`，因為既有測試共用固定的 `01EVENT`。
