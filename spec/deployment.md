@@ -31,6 +31,7 @@ importing the same key, or the form holds it twice.
 | `GOOGLE_REFRESH_TOKEN` | drive.file scope only, from `setup_reminder_sheet.py` |
 | `GCS_BUCKET` | left over from upstream; value not checked. Unset means uploads use the instance's local disk, which is wiped on redeploy. Uploads work end to end either way (verified 2026-09-30) |
 | `ADMIN_TOKEN` | not set: `/store/info` then always answers 403 |
+| `ALLOWED_USER_IDS` | the owner's LINE user id (comma-separated for more). **Unset means nobody can use the bot** (T24): set it before deploying a version that has the check |
 
 ## Keep-warm and reminder clock (UptimeRobot)
 
