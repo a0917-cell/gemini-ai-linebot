@@ -1,6 +1,7 @@
 import os
 import asyncio
 import mimetypes
+import re
 import time
 import traceback
 from datetime import datetime
@@ -69,6 +70,11 @@ REMINDERS_OFF = "⚠️ 提醒功能還沒設定好，暫時無法使用。"
 MAX_QUICK_REPLY = 13  # LINE: at most 13 quick reply buttons
 MAX_LABEL = 20  # LINE: action label at most 20 characters
 _WEEKDAYS = "一二三四五六日"
+
+# The RAG model cannot store reminders but once replied 「已幫您設定好提醒」
+# (2026-10-06, nothing stored). The prompt forbids it; this catches it anyway (T26).
+_FAKE_REMINDER = re.compile(r"(已|幫你|幫您|為你|為您).{0,4}(設定|設好|建立|安排).{0,3}(提醒|通知)")
+FAKE_REMINDER_NOTE = "⚠️ 上面說的提醒並沒有建立。要設定提醒請這樣寫：「明天 9 點提醒我繳圖」。"
 
 
 # --- Helpers ---
@@ -315,6 +321,8 @@ async def handle_text_message(event: MessageEvent, received_at: Optional[float] 
         quick_reply = None
         try:
             answer = await gemini.query_with_text(text, user_id)
+            if _FAKE_REMINDER.search(answer):
+                answer = f"{answer}\n\n{FAKE_REMINDER_NOTE}"
         except Exception as e:
             answer = _friendly_error("查詢", e)
 
