@@ -158,3 +158,10 @@ def test_unreadable_model_output_asks_instead_of_crashing(model, payload):
     model(payload)
 
     assert asyncio.run(rp.parse_reminder("提醒我", NOW)).problem == rp.MISSING_TIME
+
+
+def test_prompt_prefers_the_notification_time_and_keeps_lines():  # T27
+    prompt = rp._prompt(NOW)
+    assert "同時有事情發生的時間和要通知的時間時，date、hour、minute 填要通知的時間" in prompt
+    assert "事情發生的時間留在 text 裡" in prompt
+    assert "保留原本的換行和編號" in prompt

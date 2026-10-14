@@ -107,6 +107,62 @@ def test_ordinary_messages_still_go_to_rag(chat):
     assert "message" not in chat.parsed and chat.store.list_pending(A) == []
 
 
+# --- T27: wider triggers, multi-line text ---
+
+# 2026-10-06, sent by the user; it has no 提醒我 and reached the RAG answer.
+MEETING = "提醒下周二下午1330德運開會\n1.檢討植棲施工進度\n2.植生牆細節討論\n以上內容在10/11早上10:00跳通知"
+MEETING_TEXT = "下周二下午1330德運開會\n1.檢討植棲施工進度\n2.植生牆細節討論"
+
+
+@pytest.mark.parametrize("message", [
+    MEETING,                       # starts with 提醒
+    "提醒下週一交送審資料",           # starts with 提醒, one line
+    "明天 9 點提醒我繳圖",            # 提醒我
+    "明天下午三點開會記得通知我",       # 通知我
+    "明天10點跳通知：繳圖",           # 跳通知
+])
+def test_reminder_phrasings_reach_the_parser(chat, message):
+    say(message)
+
+    assert chat.parsed["message"] == message
+    assert len(chat.store.list_pending(A)) == 1
+
+
+@pytest.mark.parametrize("question", [
+    "消防檢查有哪些要提醒的事項？",  # 提醒 but not at the start
+    "公文通知的格式怎麼寫？",        # 通知 alone
+    "樓梯最小寬度？",
+])
+def test_questions_mentioning_reminders_still_go_to_rag(chat, question):
+    say(question)
+
+    assert chat.sent[-1].text == f"RAG:{question}"
+    assert "message" not in chat.parsed
+
+
+def test_multi_line_reminder_keeps_its_lines(chat):
+    chat.parsed["result"] = rp.ParsedReminder(DUE, MEETING_TEXT)
+
+    say(MEETING)
+
+    [r] = chat.store.list_pending(A)
+    assert r.text == MEETING_TEXT
+    assert chat.sent[-1].text == f"⏰ 已設定：9/30（三）09:00\n{MEETING_TEXT}"
+    assert all("\n" not in label for label, _ in buttons(chat.sent[-1]))
+
+
+def test_multi_line_reminder_is_one_line_in_the_list(chat):
+    chat.store.add(A, DUE, MEETING_TEXT)
+
+    say("我的提醒")
+
+    msg = chat.sent[-1]
+    assert msg.text == ("⏰ 你的提醒（1 筆）：\n"
+                        "1. 9/30（三）09:00 下周二下午1330德運開會 1.檢討植棲施工進度 2.植生牆細節討論")
+    assert all("\n" not in label for label, _ in buttons(msg))
+    assert all("\n" not in i.action.display_text for i in msg.quick_reply.items)
+
+
 # --- list ---
 
 def test_list_shows_only_my_pending_reminders_in_order(chat):

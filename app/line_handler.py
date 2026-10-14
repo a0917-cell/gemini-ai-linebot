@@ -61,7 +61,11 @@ TRUNCATED_NOTE = "\n（回答太長，後面省略）"
 PRIVATE_NOTE = "這是私人助理，目前不對外提供服務。"
 
 # Reminder commands (plan T11). Anything else goes to the RAG answer.
-REMINDER_TRIGGER = "提醒我"
+# T27: 提醒我 alone missed 「提醒下周二…跳通知」 (2026-10-06). A message that
+# starts with 提醒, or holds one of these, is a reminder; 提醒 mid-sentence is
+# usually a question (「有哪些要提醒的事項」) and stays with the RAG answer.
+REMINDER_START = "提醒"
+REMINDER_TRIGGERS = ("提醒我", "通知我", "跳通知")
 LIST_COMMAND = "我的提醒"
 CANCEL_PREFIX = "action=cancel_reminder&id="
 NO_REMINDERS = "目前沒有待送的提醒。設定方式：「明天 9 點提醒我繳圖」。"
@@ -197,21 +201,35 @@ def _fmt_due(dt: datetime) -> str:
     return f"{dt.month}/{dt.day}（{_WEEKDAYS[dt.weekday()]}）{dt:%H:%M}"
 
 
+def _one_line(text: str) -> str:
+    """A multi-line reminder squeezed onto one line, for lists and buttons."""
+    return " ".join(part.strip() for part in text.splitlines() if part.strip())
+
+
+def _with_text(head: str, text: str) -> str:
+    """A multi-line reminder starts on its own line under the head."""
+    return f"{head}\n{text}" if "\n" in text else f"{head} {text}"
+
+
+def _is_reminder_request(text: str) -> bool:
+    return text.startswith(REMINDER_START) or any(t in text for t in REMINDER_TRIGGERS)
+
+
 def _cancel_button(reminder, label: str) -> QuickReplyItem:
     return QuickReplyItem(
         action=PostbackAction(
-            label=label[:MAX_LABEL],
+            label=_one_line(label)[:MAX_LABEL],
             data=f"{CANCEL_PREFIX}{reminder.id}",
-            display_text=f"取消提醒：{reminder.text}"[:300],
+            display_text=f"取消提醒：{_one_line(reminder.text)}"[:300],
         )
     )
 
 
 async def _reminder_command(text: str, user_id: str):
-    """(reply text, quick reply) for 我的提醒 / …提醒我…, or None for other text.
-    Sheets calls are blocking, so they run in a worker thread."""
+    """(reply text, quick reply) for 我的提醒 / a reminder request, or None for
+    other text. Sheets calls are blocking, so they run in a worker thread."""
     is_list = text == LIST_COMMAND
-    if not is_list and REMINDER_TRIGGER not in text:
+    if not is_list and not _is_reminder_request(text):
         return None
     try:
         store = await asyncio.to_thread(rem.get_store)
@@ -219,7 +237,7 @@ async def _reminder_command(text: str, user_id: str):
             pending = await asyncio.to_thread(store.list_pending, user_id)
             if not pending:
                 return NO_REMINDERS, None
-            lines = [f"{i}. {_fmt_due(r.due_at)} {r.text}" for i, r in enumerate(pending, start=1)]
+            lines = [f"{i}. {_fmt_due(r.due_at)} {_one_line(r.text)}" for i, r in enumerate(pending, start=1)]
             buttons = [_cancel_button(r, f"取消 {i}. {r.text}")
                        for i, r in enumerate(pending[:MAX_QUICK_REPLY], start=1)]
             return f"⏰ 你的提醒（{len(pending)} 筆）：\n" + "\n".join(lines), QuickReply(items=buttons)
@@ -228,7 +246,7 @@ async def _reminder_command(text: str, user_id: str):
         if parsed.problem:
             return rp.MESSAGES[parsed.problem], None
         r = await asyncio.to_thread(store.add, user_id, parsed.due_at, parsed.text)
-        return f"⏰ 已設定：{_fmt_due(r.due_at)} {r.text}", QuickReply(items=[_cancel_button(r, "取消這個提醒")])
+        return _with_text(f"⏰ 已設定：{_fmt_due(r.due_at)}", r.text), QuickReply(items=[_cancel_button(r, "取消這個提醒")])
     except rem.RemindersNotConfigured:
         return REMINDERS_OFF, None
     except Exception as e:

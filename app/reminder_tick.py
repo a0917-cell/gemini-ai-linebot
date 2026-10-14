@@ -27,9 +27,10 @@ def _how_late(delta: timedelta) -> str:
 
 def reminder_text(reminder, now: datetime) -> str:
     late = now - reminder.due_at
+    head = "⏰ 提醒：\n" if "\n" in reminder.text else "⏰ 提醒："  # T27: multi-line on its own line
     if late <= LATE_AFTER:
-        return f"⏰ 提醒：{reminder.text}"
-    return f"⏰ 提醒：{reminder.text}（原定 {_fmt_due(reminder.due_at)}，晚了 {_how_late(late)}）"
+        return f"{head}{reminder.text}"
+    return f"{head}{reminder.text}（原定 {_fmt_due(reminder.due_at)}，晚了 {_how_late(late)}）"
 
 
 async def run_tick(now: datetime, store, push) -> dict:

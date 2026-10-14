@@ -55,6 +55,15 @@ def test_only_due_reminders_are_pushed_to_their_owner():
     assert [r.text for r in store.list_pending(A)] == ["還沒到"]
 
 
+def test_multi_line_reminder_starts_on_its_own_line():  # T27
+    store, push = rem.InMemoryReminderStore(), Pusher()
+    store.add(A, DUE, "德運開會\n1.檢討進度\n2.細節討論")
+
+    run(store, push)
+
+    assert push.sent == [(A, "⏰ 提醒：\n德運開會\n1.檢討進度\n2.細節討論")]
+
+
 def test_a_reminder_is_sent_once():
     store, push = rem.InMemoryReminderStore(), Pusher()
     store.add(A, DUE, "繳圖")
