@@ -151,6 +151,7 @@ def test_parse_sends_the_current_taipei_time_and_asks_for_json(model):
     assert cfg.response_mime_type == "application/json"
     assert cfg.response_schema is rp.ReminderFields
     assert model.seen["contents"] == "明天早上 9 點提醒我繳圖"
+    assert model.seen["timeout_ms"] == gemini.PARSE_TIMEOUT_MS  # T28: a reminder never waits a minute
 
 
 @pytest.mark.parametrize("payload", ["not json", "", "{\"hour\": \"九\"}"])

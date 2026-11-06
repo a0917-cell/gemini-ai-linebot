@@ -103,6 +103,7 @@ async def parse_reminder(message: str, now: datetime) -> ParsedReminder:
             response_mime_type="application/json",
             response_schema=ReminderFields,
         ),
+        timeout_ms=gemini.PARSE_TIMEOUT_MS,
     )
     try:
         fields = ReminderFields.model_validate_json(response.text or "")

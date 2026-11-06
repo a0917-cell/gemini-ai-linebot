@@ -17,11 +17,13 @@ class FakeModels:
         self.fail_models = set(fail_models)
         self.error = error
         self.calls = []
+        self.configs = []
 
     async def generate_content(self, **kwargs):
         self.calls.append(kwargs["model"])
+        self.configs.append(kwargs.get("config"))
         if kwargs["model"] in self.fail_models:
-            raise Exception(self.error)
+            raise self.error if isinstance(self.error, BaseException) else Exception(self.error)
         return SimpleNamespace(text=f"answer from {kwargs['model']}")
 
 
@@ -130,3 +132,64 @@ def test_daily_quota_is_recognised():
     assert gemini._is_daily_quota(Exception(DAILY))
     assert not gemini._is_daily_quota(Exception(PER_MINUTE))
     assert not gemini._is_daily_quota(Exception("503 UNAVAILABLE: high demand"))
+
+
+# --- T28: a hung call must end, and a timeout is not retried ---
+# 2026-11-06 the first call hung 5 min 40 s before its 503. The SDK raises a bare
+# TimeoutError with an empty message (measured against a local server that never
+# answers), so it cannot be recognised by text.
+
+def test_timeout_values_are_pinned():
+    assert gemini.ANSWER_TIMEOUT_MS == 60_000
+    assert gemini.PARSE_TIMEOUT_MS == 20_000
+
+
+def test_every_call_carries_the_answer_timeout_by_default(fake):
+    models = fake()
+    tools = [gemini.types.Tool(google_search=gemini.types.GoogleSearch())]
+
+    asyncio.run(gemini._generate_with_retry(model=PRIMARY, contents="hi"))
+    asyncio.run(gemini._generate_with_retry(
+        model=PRIMARY, contents="hi", config=gemini.types.GenerateContentConfig(tools=tools)))
+
+    assert [c.http_options.timeout for c in models.configs] == [60_000, 60_000]
+    assert models.configs[1].tools == tools  # the caller's config is kept
+
+
+def test_a_caller_can_ask_for_a_shorter_timeout(fake):
+    models = fake()
+
+    asyncio.run(gemini._generate_with_retry(model=PRIMARY, contents="hi", timeout_ms=20_000))
+
+    assert models.configs[0].http_options.timeout == 20_000
+
+
+@pytest.mark.parametrize("timeout", [
+    TimeoutError(),                     # what the SDK raised, measured
+    TimeoutError("Deadline exceeded"),  # text that also reads as transient must not buy a retry
+])
+def test_timeout_goes_straight_to_the_fallback(fake, timeout):
+    models = fake(fail_models={PRIMARY}, error=timeout)
+
+    resp = asyncio.run(gemini._generate_with_retry(model=PRIMARY, contents="hi"))
+
+    assert resp.text == f"answer from {FALLBACK}"
+    assert models.calls == [PRIMARY, FALLBACK]  # waiting again on a hung model helps nobody
+    assert models.configs[1].http_options.timeout == 60_000  # the fallback is bounded too
+
+
+def test_timeout_on_both_models_raises_without_retrying(fake):
+    models = fake(fail_models={PRIMARY, FALLBACK}, error=TimeoutError())
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(gemini._generate_with_retry(model=PRIMARY, contents="hi"))
+    assert models.calls == [PRIMARY, FALLBACK]
+
+
+def test_timeouts_are_recognised():
+    import httpx
+    assert gemini._is_timeout(TimeoutError())
+    assert gemini._is_timeout(asyncio.TimeoutError())
+    assert gemini._is_timeout(httpx.ReadTimeout(""))
+    assert not gemini._is_timeout(Exception("503 UNAVAILABLE: high demand"))
+    assert not gemini._is_timeout(ValueError(""))

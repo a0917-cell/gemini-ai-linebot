@@ -8,6 +8,7 @@ import mimetypes
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
+import httpx
 from google import genai
 from google.genai import types
 from google.cloud import storage as gcs
@@ -237,6 +238,23 @@ def _is_transient(exc: Exception) -> bool:
     return any(m in str(exc).lower() for m in _TRANSIENT_MARKERS)
 
 
+# 2026-11-06 a call hung 5 min 40 s before its 503 and the reply came 6 minutes
+# late (plan T28). Every call now has a deadline; a reminder parse is short.
+ANSWER_TIMEOUT_MS = 60_000
+PARSE_TIMEOUT_MS = 20_000
+
+
+def _is_timeout(exc: Exception) -> bool:
+    """The SDK raises a bare TimeoutError with an empty message (aiohttp, which
+    line-bot-sdk installs); httpx raises its own. Matched by type, not text."""
+    return isinstance(exc, (TimeoutError, httpx.TimeoutException))
+
+
+def _with_timeout(config: Optional[types.GenerateContentConfig], timeout_ms: int) -> types.GenerateContentConfig:
+    config = config or types.GenerateContentConfig()
+    return config.model_copy(update={"http_options": types.HttpOptions(timeout=timeout_ms)})
+
+
 def _is_daily_quota(exc: Exception) -> bool:
     """429 from a per-day quota (free tier: 20 requests/day on gemini-3.8-flash,
     quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier). Retrying within
@@ -244,16 +262,18 @@ def _is_daily_quota(exc: Exception) -> bool:
     return "perday" in str(exc).lower()
 
 
-async def _generate_with_retry(*, max_retries: int = 3, **kwargs):
-    """Call generate_content with backoff; if the model stays overloaded, try
-    FALLBACK_MODEL (one retry) before giving up. Non-transient errors raise
-    immediately and never trigger the fallback."""
+async def _generate_with_retry(*, max_retries: int = 3, timeout_ms: int = ANSWER_TIMEOUT_MS, **kwargs):
+    """Call generate_content with backoff; if the model stays overloaded or times
+    out, try FALLBACK_MODEL (one retry) before giving up. Non-transient errors
+    raise immediately and never trigger the fallback."""
+    kwargs["config"] = _with_timeout(kwargs.get("config"), timeout_ms)
     try:
         return await _retry_loop(max_retries, **kwargs)
     except Exception as e:
-        if not _is_transient(e) or not FALLBACK_MODEL or kwargs.get("model") == FALLBACK_MODEL:
+        if not (_is_transient(e) or _is_timeout(e)) or not FALLBACK_MODEL or kwargs.get("model") == FALLBACK_MODEL:
             raise
-        print(f"[Gemini] {kwargs.get('model')} still overloaded; falling back to {FALLBACK_MODEL}")
+        reason = "timed out" if _is_timeout(e) else "still overloaded"
+        print(f"[Gemini] {kwargs.get('model')} {reason}; falling back to {FALLBACK_MODEL}")
         return await _retry_loop(1, **{**kwargs, "model": FALLBACK_MODEL})
 
 
@@ -264,7 +284,9 @@ async def _retry_loop(max_retries: int, **kwargs):
         try:
             return await get_client().aio.models.generate_content(**kwargs)
         except Exception as e:
-            if not _is_transient(e) or _is_daily_quota(e):
+            # A day's quota does not return in seconds and a hung model is not
+            # worth another wait: both go straight to the caller's fallback.
+            if not _is_transient(e) or _is_daily_quota(e) or _is_timeout(e):
                 raise
             last_exc = e
             if attempt < max_retries:

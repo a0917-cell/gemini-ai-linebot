@@ -64,8 +64,9 @@ def test_text_query_failure_is_explained_in_chinese(monkeypatch, sent, exc):
     _assert_clean(sent)
 
 
-def test_overload_tells_user_to_retry_shortly(monkeypatch, sent):
-    monkeypatch.setattr(gemini, "query_with_text", _raiser(OVERLOAD))
+@pytest.mark.parametrize("exc", [OVERLOAD, TimeoutError()])  # T28: a timeout is the AI being busy too
+def test_overload_tells_user_to_retry_shortly(monkeypatch, sent, exc):
+    monkeypatch.setattr(gemini, "query_with_text", _raiser(exc))
 
     asyncio.run(line.handle_text_message(_event(SimpleNamespace(text="你好"))))
 

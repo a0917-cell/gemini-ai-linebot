@@ -190,7 +190,7 @@ def _friendly_error(action: str, exc: Exception) -> str:
     Raw exception text (status codes, JSON bodies) must never reach LINE.
     Call from inside the except block so the traceback is available."""
     print(f"[{action}] Error: {exc}\n{traceback.format_exc()}")
-    if gemini._is_transient(exc):
+    if gemini._is_transient(exc) or gemini._is_timeout(exc):
         return "⚠️ AI 忙線中，請 1 分鐘後再傳一次 🙏"
     return f"❌ {action}失敗，請稍後再試一次。"
 
